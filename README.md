@@ -10,7 +10,10 @@ It's a web app you can **Add to Home Screen** in Safari, it works offline agains
 - **Get it back**: it bounces off walls and returns, but can get stuck and drop. Walk over it, or **hold throw to call it back** (it hits anyone in the way)
 - **Slash**: red button. Deadly with your boomerang, a shove without it, and it parries boomerangs
 - **Dash**: blue button. Dodges, and hops over hot-sauce pits
-- **Power-ups** (hold up to 3): Explosive, Fire trail, Ice trail, Triple, Telekinesis, Teleport, Ghost, Speedy Feet, Shield
+- **Curve**: drag again (or push the right stick) right after throwing to bend it around corners
+- **Power-ups** (hold up to 3): Explosive, Fire trail, Ice trail, Triple, Telekinesis, Teleport, Drill, Speedy Feet, Shield, Disguise, Decoy, and watch out for Bamboozled
+- **Arenas**: 8, including tall grass to hide in, slippery ice, and teleporter pads
+- **Modes**: Free-for-all or Teams (2v2); options for power-up frequency and call-back on/off
 - Keyboard: WASD + J (throw) / L (slash) / K (dash). Controllers: A throw, X slash, B dash, right stick aims
 
 Full rules, and how they compare to Boomerang Fu: [`docs/mechanics.md`](docs/mechanics.md).

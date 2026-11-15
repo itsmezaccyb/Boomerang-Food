@@ -36,6 +36,9 @@
         <h2>Match</h2>
         <div class="row"><span>Points to win</span><div class="seg" id="seg-points"></div></div>
         <div class="row"><span>Arena</span><button class="pill" id="btn-map"></button></div>
+        <div class="row"><span>Mode</span><button class="pill" id="btn-mode"></button></div>
+        <div class="row"><span>Power-ups</span><button class="pill" id="btn-pw"></button></div>
+        <div class="row"><span>Hold to call back</span><button class="pill" id="btn-pull"></button></div>
         <div class="row"><span>Camera</span><button class="pill" id="btn-camera"></button></div>
         <div class="row"><span>Sound</span><button class="pill" id="btn-sound"></button></div>
         <button id="btn-play" class="big">Play</button>
@@ -81,6 +84,9 @@
         <h2>Match</h2>
         <div class="row"><span>Points to win</span><div class="seg" id="lobby-points"></div></div>
         <div class="row"><span>Arena</span><button class="pill" id="lobby-map"></button></div>
+        <div class="row"><span>Mode</span><button class="pill" id="lobby-mode"></button></div>
+        <div class="row"><span>Power-ups</span><button class="pill" id="lobby-pw"></button></div>
+        <div class="row"><span>Hold to call back</span><button class="pill" id="lobby-pull"></button></div>
         <button class="big" id="btn-lobby-start">Start match</button>
         <p class="status" id="lobby-wait"></p>
         <button class="pill wide" id="btn-lobby-leave">Leave room</button>
@@ -107,10 +113,16 @@
         <span class="pw"><img src="sprites/multi.svg">Triple</span>
         <span class="pw"><img src="sprites/crystal.svg">Telekinesis (hold to steer)</span>
         <span class="pw"><img src="sprites/sparkles.svg">Teleport (dash to your boomerang)</span>
-        <span class="pw"><img src="sprites/ghost.svg">Ghost (through walls)</span>
+        <span class="pw"><img src="sprites/drill.svg">Drill (through walls)</span>
         <span class="pw"><img src="sprites/shoe.svg">Speedy feet</span>
         <span class="pw"><img src="sprites/shield.svg">Shield</span>
+        <span class="pw"><img src="sprites/mask.svg">Disguise (stand still)</span>
+        <span class="pw"><img src="sprites/decoy.svg">Decoy (dash)</span>
+        <span class="pw"><img src="sprites/dizzy.svg">Bamboozled — avoid! flips your controls</span>
       </li>
+      <li><b>Curve</b> — right after throwing, drag on the right side (or push the right stick) to bend your boomerang around corners.</li>
+      <li><b>Arenas</b> — hide in tall grass (others can't see you unless they're close), slide on ice, and step on purple pads to teleport across the map.</li>
+      <li><b>Teams</b> — pick Teams (2v2) in the menu: red vs blue, no friendly fire.</li>
       <li><b>Keyboard</b>: WASD move, J throw/call, L slash, K dash. Player 2: arrows, / throw, , slash, . dash.</li>
       <li><b>Online</b>: one person taps <i>Host a game</i> and shares the 4-letter code; friends tap <i>Join</i>. The server runs the match, so everyone sees the same thing.</li>
       <li><b>Controllers</b> (Bluetooth works on iPhone/iPad): left stick move, right stick aim, A/RT throw (hold to call back), X/RB slash, B/LT dash.</li>

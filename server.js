@@ -60,6 +60,7 @@ function freeChar(room, except) {
 function lobbyState(room) {
   return {
     t: 'lobby', code: room.code, host: room.host, tv: !!room.tvHost, playing: !!room.g, points: room.points, map: room.map,
+    mode: room.mode, pw: room.pw, pull: room.pull,
     slots: room.slots.map(s => ({ type: s.type, owner: s.owner || 0, char: s.char, name: s.owner ? (room.clients.get(s.owner) || {}).name : '' })),
   };
 }
@@ -114,14 +115,14 @@ function startMatch(room) {
   });
   if (specs.length < 2) return false;
   room.g = Sim.create(); room.tick = 0; room.events = [];
-  Sim.newMatch(room.g, specs, room.points, room.map);
+  Sim.newMatch(room.g, specs, room.points, room.map, { mode: room.mode, pw: room.pw, pull: room.pull });
   room.events.push(...room.g.events); room.g.events = [];
   for (const c of room.clients.values()) {
     c.queue = []; c.last = Sim.NO_INPUT; c.ack = 0;
     if (c.slot >= 0 && room.slots[c.slot].owner !== c.id) c.slot = -1;
   }
   const players = specs.map(s => ({ i: s.i, char: s.char, type: s.type, name: s.type === 'net' ? (room.clients.get(room.slots[s.i].owner) || {}).name : '' }));
-  for (const c of room.clients.values()) send(c.ws, { t: 'start', players, you: c.slot, points: room.points });
+  for (const c of room.clients.values()) send(c.ws, { t: 'start', players, you: c.slot, points: room.points, mode: room.g.opts.mode });
   return true;
 }
 
@@ -142,7 +143,7 @@ wss.on('connection', (ws) => {
       case 'ping': return send(ws, { t: 'pong', ts: m.ts });
       case 'host': {
         leaveRoom(ws); ws.name = cleanName(m.name);
-        const r = { code: makeCode(), clients: new Map(), host: ws.id, points: 5, map: -1, g: null, tick: 0, events: [],
+        const r = { code: makeCode(), clients: new Map(), host: ws.id, points: 5, map: -1, mode: 'ffa', pw: 1, pull: true, g: null, tick: 0, events: [],
           slots: [{ type: 'open' }, { type: 'open' }, { type: 'open' }, { type: 'open' }], tvHost: !!m.tv };
         rooms.set(r.code, r); joinRoom(ws, r, !!m.tv);
         return;
@@ -177,6 +178,9 @@ wss.on('connection', (ws) => {
         if (!room || !canManage(room, ws) || room.g) return;
         if ([3, 5, 7].includes(m.points)) room.points = m.points;
         if (Number.isInteger(m.map) && m.map >= -1 && m.map < Sim.MAPS.length) room.map = m.map;
+        if (m.mode === 'ffa' || m.mode === 'teams') room.mode = m.mode;
+        if ([0, 0.5, 1, 2].includes(m.pw)) room.pw = m.pw;
+        if (typeof m.pull === 'boolean') room.pull = m.pull;
         broadcastLobby(room); return;
       }
       case 'start': {

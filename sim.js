@@ -6,7 +6,8 @@
 'use strict';
 
 const TILE = 48, COLS = 20, ROWS = 12, WW = COLS * TILE, WH = ROWS * TILE;
-const FLOOR = 0, WALL = 1, CRATE = 2, PIT = 3, TREE = 4;
+const FLOOR = 0, WALL = 1, CRATE = 2, PIT = 3, TREE = 4, GRASS = 5, ICE = 6, PAD = 7;
+const TEAM_COLORS = ['#ff5d73', '#43a8ff'], TEAM_NAMES = ['Red', 'Blue'];
 const PLAYER_R = 16;
 const PCOLORS = ['#ff5d73', '#43a8ff', '#ffd23f', '#5ee06b'];
 const CHARS = [
@@ -30,9 +31,12 @@ const POWERS = {
   multi:    { sprite: 'multi',    name: 'Triple Throw!' },
   tele:     { sprite: 'crystal',  name: 'Telekinesis!' },
   teleport: { sprite: 'sparkles', name: 'Teleport!' },
-  ghost:    { sprite: 'ghost',    name: 'Ghost Rang!' },
+  drill:    { sprite: 'drill',    name: 'Drill Rang!' },
   feet:     { sprite: 'shoe',     name: 'Speedy Feet!' },
   shield:   { sprite: 'shield',   name: 'Shield!' },
+  disguise: { sprite: 'mask',     name: 'Disguise!' },
+  decoy:    { sprite: 'decoy',    name: 'Decoy!' },
+  bamboo:   { sprite: 'dizzy',    name: 'Bamboozled!' }, // bad pickup: flips your controls for a few seconds
 };
 const POWER_KEYS = Object.keys(POWERS);
 const MAX_POWERS = 3;
@@ -49,6 +53,7 @@ const T = {
   recallMax: 720, recallAccel: 1300, teleRadius: 380, teleSpeed: 520,
   slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
   trailLife: 2.2, trailGap: 24, freeze: 1.3, explodeR: 78,
+  curve: 2.6, holdToCall: 0.2, iceGrip: 2.2, bamboo: 5, disguiseAfter: 1.2, decoyLife: 5, padCd: 0.8, revealDist: 80,
 };
 // Quadrant maps (10x6), mirrored both ways into a fair 20x12 arena.
 // # wall  t tree  c box  o hot-sauce pit  S spawn  . floor
@@ -58,6 +63,10 @@ const MAPS = [
   { name: 'Sauce Pit', q: ['##########', '#S..c.....', '#..ooo..#.', '#..o....#.', '#..o..c...', '#.c....ooo'] },
   { name: 'Garden', q: ['##########', '#S...t....', '#.c.....c.', '#..t.cc.t.', '#.....t...', '#.tc......'] },
   { name: 'Open Plate', q: ['##########', '#S........', '#.........', '#...c..#..', '#.........', '#......c..'] },
+  // g tall grass (hide)  i slippery ice  p teleporter pad (warps to the opposite pad)
+  { name: 'Salad Bar', q: ['##########', '#S..ggg...', '#.c.ggg.#.', '#...c...#.', '#gg....gg.', '#gg..c.gg.'] },
+  { name: 'Freezer', q: ['##########', '#S..iiii..', '#.##iiii#.', '#..iiiiii.', '#.ciiiii..', '#..iiii.c.'] },
+  { name: 'Portal Pantry', q: ['##########', '#S...#....', '#.p..#..c.', '#....#....', '#.c.....##', '#.....c...'] },
 ];
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -67,6 +76,9 @@ const dist2 = (ax, ay, bx, by) => (ax - bx) ** 2 + (ay - by) ** 2;
 const angDiff = (a, b) => { let d = (a - b) % (Math.PI * 2); if (d > Math.PI) d -= Math.PI * 2; if (d < -Math.PI) d += Math.PI * 2; return d; };
 const NO_INPUT = { mx: 0, my: 0, ax: 0, ay: 0, throw: false, dash: false, slash: false };
 const has = (p, k) => k === 'shield' ? p.shield : p.powers.indexOf(k) >= 0;
+const walkable = (v) => v === FLOOR || v === GRASS || v === ICE || v === PAD;
+const teamOf = (p) => (game && game.opts.mode === 'teams' ? p.i % 2 : p.i);
+const sameTeam = (a, b) => a && b && a !== b && game.opts.mode === 'teams' && teamOf(a) === teamOf(b);
 
 let game = null;
 const emit = (type, d) => { game.events.push([type, d === undefined ? 0 : d]); };
@@ -75,8 +87,8 @@ const R0 = (v) => Math.round(v);
 function create() {
   return {
     grid: [], spawns: [], mapIndex: 0, players: [], rangs: [], pickups: [], trails: [], events: [],
-    round: 0, phase: 'intro', phaseT: 0, timeScale: 1, slowT: 0, powerTimer: 0, time: 0,
-    points: 5, mapSetting: -1, nextId: 1, over: false,
+    round: 0, phase: 'intro', phaseT: 0, timeScale: 1, slowT: 0, powerTimer: 0, time: 0, decoys: [],
+    points: 5, mapSetting: -1, nextId: 1, over: false, opts: { mode: 'ffa', pull: true, pw: 1 },
   };
 }
 function use(g) { game = g; }
@@ -89,6 +101,7 @@ function buildMap(idx) {
       const ch = m.q[y < 6 ? y : 11 - y][x < 10 ? x : 19 - x];
       let v = FLOOR;
       if (ch === '#') v = WALL; else if (ch === 'c') v = CRATE; else if (ch === 'o') v = PIT; else if (ch === 't') v = TREE;
+      else if (ch === 'g') v = GRASS; else if (ch === 'i') v = ICE; else if (ch === 'p') v = PAD;
       else if (ch === 'S') spawns.push({ x: x * TILE + TILE / 2, y: y * TILE + TILE / 2, q: (x < 10 ? 0 : 1) + (y < 6 ? 0 : 2) });
       g[y].push(v);
     }
@@ -110,9 +123,12 @@ function makeBot(type) {
   return { diff: BOT_DIFF[type] || BOT_DIFF.cpu2, think: 0, mode: 'idle', aimErr: 0, chargeGoal: 0, tap: 0, field: null, fieldKey: '', fieldAge: 0, strafe: 1, strafeT: 0, noPathT: 0, danger: null };
 }
 
-function newMatch(g, specs, points, mapSetting) {
+// opts: { mode: 'ffa' | 'teams', pull: call-back on/off, pw: power-up frequency 0 | 0.5 | 1 | 2 }
+function newMatch(g, specs, points, mapSetting, opts) {
   use(g);
   g.points = points; g.mapSetting = mapSetting; g.over = false;
+  g.opts = Object.assign({ mode: 'ffa', pull: true, pw: 1 }, opts || {});
+  if (g.opts.mode === 'teams' && new Set(specs.map(sp => sp.i % 2)).size < 2) g.opts.mode = 'ffa'; // need two teams
   g.players = specs.map(s => ({
     i: s.i, type: s.type, char: CHARS[s.char], charIndex: s.char, color: PCOLORS[s.i], score: 0,
     bot: s.type.startsWith('cpu') ? makeBot(s.type) : null, input: NO_INPUT, powers: [], shield: false,
@@ -129,7 +145,7 @@ function newRound() {
     : (game.mapIndex + 1 + Math.floor(Math.random() * (n - 1))) % n;
   const m = buildMap(idx);
   game.grid = m.grid; game.spawns = m.spawns; game.mapIndex = idx;
-  game.rangs = []; game.pickups = []; game.trails = [];
+  game.rangs = []; game.pickups = []; game.trails = []; game.decoys = [];
   game.players.forEach((p, n) => {
     const s = game.spawns[n];
     // Power-ups last the whole match (like the genre standard); positions and state reset each round.
@@ -137,7 +153,8 @@ function newRound() {
       x: s.x, y: s.y, vx: 0, vy: 0, kbx: 0, kby: 0, face: Math.atan2(WH / 2 - s.y, WW / 2 - s.x), aim: 0, aimStick: false,
       alive: true, hasRang: true, charging: false, charge: 0, slashT: 0, slashCd: 0, slashArmed: true,
       dashT: 0, dashCd: 0, dashDir: 0, falling: 0, walkT: 0, prevThrow: false, prevDash: false, prevSlash: false,
-      inv: 0, frozen: 0, recalling: false, steering: false,
+      inv: 0, frozen: 0, recalling: false, steering: false, holdT: 0, bamboo: 0, hidden: false, disguised: false, stillT: 0,
+      decoyUsed: false, onPad: false, padCd: 0, team: teamOf(p),
     });
     p.aim = p.face;
     if (p.bot) Object.assign(p.bot, { think: 0.3 + Math.random() * 0.3, mode: 'idle', tap: 0, field: null, fieldKey: '', danger: null });
@@ -166,11 +183,13 @@ function step(g, dt) {
   for (const r of g.rangs.slice()) updateRang(r, sdt);
   rangClashes();
   updateTrails(sdt);
+  updateDecoys(sdt);
   updatePickups(sdt);
 
   if (g.phase === 'fight') {
-    const alive = g.players.filter(p => p.alive);
-    if (alive.length <= (g.players.length > 1 ? 1 : 0)) { g.phase = 'end'; g.phaseT = 1.6; }
+    const teams = new Set(g.players.filter(p => p.alive).map(teamOf));
+    const total = new Set(g.players.map(teamOf)).size;
+    if (teams.size <= (total > 1 ? 1 : 0)) { g.phase = 'end'; g.phaseT = 1.6; }
   } else if (g.phase === 'end') {
     g.phaseT -= dt;
     if (g.phaseT <= 0) endRound();
@@ -183,10 +202,13 @@ function step(g, dt) {
 function endRound() {
   const alive = game.players.filter(p => p.alive);
   const scores = () => game.players.map(p => p.score);
-  if (alive.length === 1) {
-    const w = alive[0]; w.score++;
-    if (w.score >= game.points) { game.over = true; game.phase = 'over'; emit('result', { w: w.i, scores: scores() }); return; }
-    emit('score', { w: w.i, scores: scores() });
+  if (alive.length && new Set(alive.map(teamOf)).size === 1) {
+    const w = alive[0], team = game.opts.mode === 'teams';
+    // in teams, every member of the surviving team scores (dead teammates included)
+    for (const p of game.players) if (team ? teamOf(p) === teamOf(w) : p === w) p.score++;
+    const ev = { w: w.i, scores: scores(), team: team ? teamOf(w) : -1 };
+    if (w.score >= game.points) { game.over = true; game.phase = 'over'; emit('result', ev); return; }
+    emit('score', ev);
   } else emit('draw', { scores: scores() });
   game.phase = 'between'; game.phaseT = 1.2;
 }
@@ -196,6 +218,7 @@ function movePlayer(p, inp, dt, quiet) {
   p.dashCd = Math.max(0, p.dashCd - dt);
   const frozen = p.frozen > 0;
   let mx = frozen || p.steeringNoMove ? 0 : inp.mx, my = frozen || p.steeringNoMove ? 0 : inp.my;
+  if (p.bamboo > 0) { mx = -mx; my = -my; } // Bamboozled: controls flipped
   const ml = Math.hypot(mx, my);
   if (ml > 1) { mx /= ml; my /= ml; }
   const stick = Math.hypot(inp.ax, inp.ay) > 0.3;
@@ -215,7 +238,7 @@ function movePlayer(p, inp, dt, quiet) {
   if (p.dashT > 0) {
     p.dashT -= dt; p.vx = Math.cos(p.dashDir) * T.dashSpeed; p.vy = Math.sin(p.dashDir) * T.dashSpeed;
   } else {
-    const a = Math.min(1, dt * 14);
+    const a = Math.min(1, dt * (tileAt(p.x, p.y) === ICE ? T.iceGrip : 14)); // ice: barely any grip
     p.vx = lerp(p.vx, mx * speed, a); p.vy = lerp(p.vy, my * speed, a);
   }
   // knockback (from shoves and lunges) decays quickly
@@ -232,26 +255,54 @@ function updatePlayer(p, dt) {
   if (p.falling > 0) { p.falling -= dt; if (p.falling <= 0) kill(p, null, true); return; }
   const inp = game.phase === 'between' ? NO_INPUT : p.input;
   p.slashT = Math.max(0, p.slashT - dt); p.slashCd = Math.max(0, p.slashCd - dt);
-  p.inv = Math.max(0, p.inv - dt); p.frozen = Math.max(0, p.frozen - dt);
+  p.inv = Math.max(0, p.inv - dt); p.frozen = Math.max(0, p.frozen - dt); p.bamboo = Math.max(0, p.bamboo - dt);
+  p.padCd = Math.max(0, p.padCd - dt);
   const frozen = p.frozen > 0;
+  const stick = Math.hypot(inp.ax, inp.ay) > 0.3;
 
   // Teleport power: dash while your boomerang is out -> warp to it
   const mine = !p.hasRang ? mainRang(p) : null;
   p.teleportNow = false;
   if (inp.dash && !p.prevDash && !frozen && mine && has(p, 'teleport') && p.dashCd <= 0 && !solidAt(mine.x, mine.y)) {
     emit('teleport', { x: R0(p.x), y: R0(p.y), x2: R0(mine.x), y2: R0(mine.y) });
+    p.disguised = false;
     p.x = mine.x; p.y = mine.y; p.dashCd = T.dashCd; p.teleportNow = true;
     catchRang(p, mine);
   }
-  // Holding throw while unarmed = recall (or steer, with telekinesis)
+  // Decoy: your first dash each round leaves a fake copy running the other way
+  if (inp.dash && !p.prevDash && !frozen && has(p, 'decoy') && !p.decoyUsed && p.dashCd <= 0 && !p.teleportNow) {
+    p.decoyUsed = true;
+    const a = Math.hypot(inp.mx, inp.my) > 0.25 ? Math.atan2(inp.my, inp.mx) + Math.PI : p.face + Math.PI;
+    game.decoys.push({ id: game.nextId++, owner: p, x: p.x, y: p.y, vx: Math.cos(a) * T.run, vy: Math.sin(a) * T.run, face: a, t: 0, turnT: rand(0.5, 1.2) });
+    emit('decoy', { x: R0(p.x), y: R0(p.y) });
+  }
+  // Holding throw while unarmed = call it back (after a short hold, so a quick drag can curve it instead),
+  // or steer it with telekinesis
   const holding = inp.throw && !p.hasRang && !frozen;
-  p.recalling = holding && !has(p, 'tele');
+  p.holdT = holding ? p.holdT + dt : 0;
+  const canCall = game.opts.pull && p.holdT > T.holdToCall;
   p.steering = holding && has(p, 'tele') && mine && mine.state !== 'dropped';
-  if (holding && has(p, 'tele') && mine && mine.state === 'dropped') p.recalling = true; // a dropped rang still needs summoning
+  p.recalling = canCall && !p.steering && !(stick && mine && mine.state === 'out');
   p.steeringNoMove = p.steering && Math.hypot(inp.ax, inp.ay) < 0.3; // no aim stick: movement keys steer instead
 
   movePlayer(p, inp, dt);
-  if (p.dashT <= 0 && tileAt(p.x, p.y) === PIT) { p.falling = 0.45; p.vx = p.vy = 0; p.charging = false; emit('sfx', 'fall'); return; }
+  const here = tileAt(p.x, p.y);
+  if (p.dashT <= 0 && here === PIT) { p.falling = 0.45; p.vx = p.vy = 0; p.charging = false; emit('sfx', 'fall'); return; }
+  // Teleporter pads warp you to the opposite pad
+  if (here === PAD && !p.onPad && p.padCd <= 0) {
+    const tx = COLS - 1 - Math.floor(p.x / TILE), ty = ROWS - 1 - Math.floor(p.y / TILE);
+    if (game.grid[ty] && game.grid[ty][tx] === PAD) {
+      emit('pad', { x: R0(p.x), y: R0(p.y), x2: tx * TILE + TILE / 2, y2: ty * TILE + TILE / 2 });
+      p.x = tx * TILE + TILE / 2; p.y = ty * TILE + TILE / 2; p.padCd = T.padCd;
+    }
+  }
+  p.onPad = tileAt(p.x, p.y) === PAD;
+  p.hidden = tileAt(p.x, p.y) === GRASS;
+  // Disguise: stand still for a moment to turn into a box; any action breaks it
+  const acting = Math.hypot(inp.mx, inp.my) > 0.2 || inp.throw || inp.slash || inp.dash || p.dashT > 0;
+  p.stillT = acting ? 0 : p.stillT + dt;
+  if (acting) p.disguised = false;
+  else if (has(p, 'disguise') && p.stillT > T.disguiseAfter && !p.disguised) { p.disguised = true; emit('disguise', { x: R0(p.x), y: R0(p.y) }); }
 
   // Throw: hold to charge, release to throw at the locked aim
   if (!frozen && inp.throw && !p.prevThrow && p.hasRang) {
@@ -272,6 +323,7 @@ function updatePlayer(p, dt) {
     if (dist2(p.x, p.y, k.x, k.y) < (PLAYER_R + 16) ** 2) {
       game.pickups.splice(game.pickups.indexOf(k), 1);
       if (k.type === 'shield') p.shield = true;
+      else if (k.type === 'bamboo') p.bamboo = T.bamboo;
       else {
         p.powers = p.powers.filter(x => x !== k.type); p.powers.push(k.type);
         if (p.powers.length > MAX_POWERS) p.powers.shift(); // oldest drops off
@@ -327,7 +379,7 @@ function slash(p) {
     if (q === p || !q.alive || q.falling) continue;
     const d = Math.hypot(q.x - p.x, q.y - p.y);
     if (d < reach && (d < 24 || Math.abs(angDiff(Math.atan2(q.y - p.y, q.x - p.x), p.face)) < T.slashArc)) {
-      if (armed) kill(q, p);
+      if (armed && !sameTeam(p, q)) kill(q, p);
       else {
         const a = Math.atan2(q.y - p.y, q.x - p.x);
         q.kbx += Math.cos(a) * T.shove; q.kby += Math.sin(a) * T.shove; q.charging = false;
@@ -335,6 +387,7 @@ function slash(p) {
       }
     }
   }
+  for (const d of game.decoys.slice()) if (d.owner !== p && Math.hypot(d.x - p.x, d.y - p.y) < reach) popDecoy(d);
   for (const r of game.rangs) { // parry
     if (r.owner === p || r.state === 'dropped') continue;
     const d = Math.hypot(r.x - p.x, r.y - p.y);
@@ -363,7 +416,7 @@ function throwRang(p, power) {
     game.rangs.push(newRang({
       owner: p, x: p.x + Math.cos(a) * 14, y: p.y + Math.sin(a) * 14, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
       speed, state: 'out', traveled: 0, maxDist, main: n === 0,
-      ghost: has(p, 'ghost'), boom: has(p, 'boom'), fire: has(p, 'fire'), ice: has(p, 'ice'),
+      drill: has(p, 'drill'), boom: has(p, 'boom'), fire: has(p, 'fire'), ice: has(p, 'ice'),
     }));
   });
   p.face = p.aim; p.hasRang = false; emit('sfx', 'throw');
@@ -383,7 +436,11 @@ function setState(r, s) { if (r.state !== s) { r.state = s; r.stateT = 0; } }
 // Move a flying boomerang one step, bouncing off solid tiles. Returns true if it bounced.
 function flyStep(r, dt) {
   const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt;
-  if (r.ghost || !solidAt(nx, ny)) { r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); return false; }
+  if (r.drill) { // drills straight through everything, breaking boxes
+    if (tileAt(nx, ny) === CRATE) breakCrate(Math.floor(nx / TILE), Math.floor(ny / TILE));
+    r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); return false;
+  }
+  if (!solidAt(nx, ny)) { r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); return false; }
   const tx = Math.floor(nx / TILE), ty = Math.floor(ny / TILE);
   if (game.grid[ty] && game.grid[ty][tx] === CRATE) breakCrate(tx, ty);
   if (r.boom) explode(r, nx, ny);
@@ -419,7 +476,14 @@ function updateRang(r, dt) {
   if (r.state === 'out') {
     const f = 1 - 0.55 * (r.traveled / r.maxDist) ** 2;
     const sp = Math.hypot(r.vx, r.vy) || 1, want = r.speed * f;
-    r.vx = r.vx / sp * want; r.vy = r.vy / sp * want;
+    let ang = Math.atan2(r.vy, r.vx);
+    // Curve: push the aim stick after throwing to bend it around corners
+    const ci = o.input;
+    if (!o.bot && !r.parried && Math.hypot(ci.ax, ci.ay) > 0.3) {
+      const d = angDiff(Math.atan2(ci.ay, ci.ax), ang), maxTurn = T.curve * dt;
+      ang += clamp(d, -maxTurn, maxTurn);
+    }
+    r.vx = Math.cos(ang) * want; r.vy = Math.sin(ang) * want;
     flyStep(r, dt);
     r.traveled += want * dt;
     if (r.traveled >= r.maxDist) { setState(r, 'return'); if (r.boom) explode(r, r.x, r.y); }
@@ -430,10 +494,10 @@ function updateRang(r, dt) {
     r.vx = lerp(r.vx, dx / d * r.speed, k); r.vy = lerp(r.vy, dy / d * r.speed, k);
     if (r.parried) r.parried = false;
     // still inside a wall (e.g. a recall was let go over one)? drift out before colliding again
-    if (solidAt(r.x, r.y) && !r.ghost) { r.x += r.vx * dt; r.y += r.vy * dt; }
+    if (solidAt(r.x, r.y) && !r.drill) { r.x += r.vx * dt; r.y += r.vy * dt; }
     else flyStep(r, dt);
     if (d < PLAYER_R + 12 && (!o.hasRang || !r.main)) { catchRang(o, r); return; }
-    if (r.stateT > T.maxReturn) { dropRang(r); return; }
+    if (r.stateT > T.maxReturn && !r.drill) { dropRang(r); return; }
   } else if (r.state === 'recall') {
     // Summon: straight to the owner, over walls, accelerating. Deadly on the way.
     const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
@@ -456,7 +520,7 @@ function updateRang(r, dt) {
   if (!game.rangs.includes(r)) return;
 
   // Stuck: too many bounces, too slow, or out too long -> it drops to the floor
-  if ((r.state === 'out' || r.state === 'return') &&
+  if ((r.state === 'out' || r.state === 'return') && !r.drill &&
       (r.bounces >= T.maxBounces || (r.speed < T.minSpeed2 && r.stateT > 0.2) || r.t > T.maxFlight)) { dropRang(r); return; }
 
   // Trails
@@ -464,7 +528,7 @@ function updateRang(r, dt) {
     r.trailD += Math.hypot(r.vx, r.vy) * dt;
     if (r.trailD > T.trailGap) {
       r.trailD = 0;
-      if (tileAt(r.x, r.y) === FLOOR) game.trails.push({ id: game.nextId++, x: r.x, y: r.y, t: 0, k: r.fire ? 'fire' : 'ice', owner: o });
+      if (walkable(tileAt(r.x, r.y))) game.trails.push({ id: game.nextId++, x: r.x, y: r.y, t: 0, k: r.fire ? 'fire' : 'ice', owner: o });
       if (game.trails.length > 180) game.trails.shift();
     }
   }
@@ -472,10 +536,28 @@ function updateRang(r, dt) {
   for (const q of game.players) {
     if (q === r.immune || !q.alive || q.falling) continue;
     if (q === o && !r.parried) continue;
+    if (sameTeam(o, q)) continue; // no friendly fire
     if (dist2(q.x, q.y, r.x, r.y) < (PLAYER_R + T.rangR) ** 2) {
       if (r.boom && !r.exploded) explode(r, r.x, r.y);
       else kill(q, o, false, r);
     }
+  }
+  for (const d of game.decoys.slice()) if (d.owner !== o && dist2(d.x, d.y, r.x, r.y) < (PLAYER_R + T.rangR) ** 2) popDecoy(d);
+}
+
+function popDecoy(d) {
+  const i = game.decoys.indexOf(d); if (i < 0) return;
+  game.decoys.splice(i, 1); emit('poof', { x: R0(d.x), y: R0(d.y) });
+}
+function updateDecoys(dt) {
+  for (const d of game.decoys.slice()) {
+    d.t += dt; d.turnT -= dt;
+    if (d.turnT <= 0) { const a = d.face + rand(-1.2, 1.2); d.face = a; d.vx = Math.cos(a) * T.run; d.vy = Math.sin(a) * T.run; d.turnT = rand(0.5, 1.2); }
+    const ox = d.x, oy = d.y;
+    moveCircle(d, d.vx * dt, d.vy * dt, PLAYER_R);
+    if (Math.hypot(d.x - ox, d.y - oy) < T.run * dt * 0.3) d.turnT = 0; // bumped a wall
+    if (tileAt(d.x + d.vx * 0.15, d.y + d.vy * 0.15) === PIT) d.turnT = 0;
+    if (d.t > T.decoyLife || !d.owner.alive) popDecoy(d);
   }
 }
 
@@ -496,7 +578,7 @@ function updateTrails(dt) {
   game.trails = game.trails.filter(t => t.t < T.trailLife);
   for (const t of game.trails) {
     for (const q of game.players) {
-      if (q === t.owner || !q.alive || q.falling) continue;
+      if (q === t.owner || sameTeam(t.owner, q) || !q.alive || q.falling) continue;
       if (dist2(q.x, q.y, t.x, t.y) < (PLAYER_R + 10) ** 2) {
         if (t.k === 'fire') kill(q, t.owner);
         else if (q.frozen <= 0 && q.inv <= 0) { q.frozen = T.freeze; q.charging = false; emit('freeze', { i: q.i, x: R0(q.x), y: R0(q.y) }); }
@@ -509,7 +591,8 @@ function explode(r, x, y) {
   if (r.exploded) return; r.exploded = true;
   const R = T.explodeR;
   emit('boom', { x: R0(x), y: R0(y), R });
-  for (const q of game.players) if (q !== r.owner && q.alive && dist2(q.x, q.y, x, y) < (R + PLAYER_R) ** 2) kill(q, r.owner);
+  for (const q of game.players) if (q !== r.owner && !sameTeam(r.owner, q) && q.alive && dist2(q.x, q.y, x, y) < (R + PLAYER_R) ** 2) kill(q, r.owner);
+  for (const d of game.decoys.slice()) if (dist2(d.x, d.y, x, y) < (R + PLAYER_R) ** 2) popDecoy(d);
   for (let ty = 0; ty < ROWS; ty++) for (let tx = 0; tx < COLS; tx++)
     if (game.grid[ty][tx] === CRATE && dist2(tx * TILE + TILE / 2, ty * TILE + TILE / 2, x, y) < (R + 20) ** 2) breakCrate(tx, ty);
 }
@@ -518,11 +601,24 @@ function breakCrate(tx, ty) {
   if (game.grid[ty][tx] !== CRATE) return;
   game.grid[ty][tx] = FLOOR;
   emit('crate', { tx, ty });
-  if (Math.random() < 0.4) game.pickups.push({ id: game.nextId++, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, type: POWER_KEYS[Math.floor(Math.random() * POWER_KEYS.length)], t: 0 });
+  if (Math.random() < 0.4 * powerRate()) game.pickups.push({ id: game.nextId++, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, type: randomPower(), t: 0 });
+}
+
+// Power-ups get rarer as players collect them (20% per power held), scaled by the match option.
+function powerRate() {
+  const held = game.players.reduce((n, p) => n + p.powers.length, 0);
+  return game.opts.pw * Math.pow(0.8, held);
+}
+function randomPower() {
+  const anyPowers = game.players.some(p => p.powers.length);
+  let k;
+  do { k = POWER_KEYS[Math.floor(Math.random() * POWER_KEYS.length)]; } while (k === 'bamboo' && !anyPowers); // never the first pickup
+  return k;
 }
 
 function kill(q, by, fell, rang) {
   if (!q.alive) return;
+  if (!fell && sameTeam(by, q)) return;
   if (!fell && q.inv > 0) return;
   if (!fell && q.shield) {
     q.shield = false; q.inv = 0.6;
@@ -540,15 +636,16 @@ function kill(q, by, fell, rang) {
 function updatePickups(dt) {
   for (const k of game.pickups) k.t += dt;
   if (game.phase !== 'fight') return;
+  if (game.opts.pw <= 0) return;
   game.powerTimer -= dt;
   if (game.powerTimer > 0) return;
-  game.powerTimer = rand(7, 11);
+  game.powerTimer = rand(7, 11) / powerRate();
   if (game.pickups.length >= 2) return;
   for (let tries = 0; tries < 40; tries++) {
     const tx = 1 + Math.floor(Math.random() * (COLS - 2)), ty = 1 + Math.floor(Math.random() * (ROWS - 2));
     const cx = tx * TILE + TILE / 2, cy = ty * TILE + TILE / 2;
     if (game.grid[ty][tx] !== FLOOR || game.players.some(p => p.alive && dist2(p.x, p.y, cx, cy) < 90 * 90)) continue;
-    game.pickups.push({ id: game.nextId++, x: cx, y: cy, type: POWER_KEYS[Math.floor(Math.random() * POWER_KEYS.length)], t: 0 });
+    game.pickups.push({ id: game.nextId++, x: cx, y: cy, type: randomPower(), t: 0 });
     emit('ring', { x: cx, y: cy });
     break;
   }
@@ -570,7 +667,7 @@ function distField(gx, gy) {
       const nx = cx + dx, ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
       const n = nx + ny * COLS;
-      if (f[n] >= 0 || game.grid[ny][nx] !== FLOOR) continue;
+      if (f[n] >= 0 || !walkable(game.grid[ny][nx])) continue;
       f[n] = f[c] + 1; q.push(n);
     }
   }
@@ -586,7 +683,7 @@ function pathDir(p, b, gx, gy) {
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const nx = cx + dx, ny = cy + dy;
     if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
-    if (dx && dy && (game.grid[cy][nx] !== FLOOR || game.grid[ny][cx] !== FLOOR)) continue;
+    if (dx && dy && (!walkable(game.grid[cy][nx]) || !walkable(game.grid[ny][cx]))) continue;
     const v = f[nx + ny * COLS];
     if (v >= 0 && v < bv) { bv = v; best = [nx, ny]; }
   }
@@ -599,15 +696,21 @@ function updateBot(p, dt) {
   const b = p.bot, D = b.diff, inp = { mx: 0, my: 0, ax: 0, ay: 0, throw: false, dash: false, slash: false };
   b.think -= dt; b.fieldAge += dt; b.strafeT -= dt;
   if (b.strafeT <= 0) { b.strafe = Math.random() < 0.5 ? 1 : -1; b.strafeT = rand(0.8, 2); }
-  const enemies = game.players.filter(q => q !== p && q.alive && !q.falling);
-  if (!enemies.length || game.phase === 'between') { p.input = inp; return; }
+  // Bots can't see snacks hiding in grass or disguised as boxes unless they're close
+  const enemies = game.players.filter(q => q !== p && q.alive && !q.falling && !sameTeam(p, q) &&
+    (!(q.hidden || q.disguised) || Math.hypot(q.x - p.x, q.y - p.y) < 90));
+  if (!enemies.length || game.phase === 'between') { // nobody visible: wander toward the middle
+    if (game.phase !== 'between' && !p.hasRang) { const m = mainRang(p); if (m && m.state === 'dropped') inp.throw = true; }
+    else if (game.phase !== 'between') { const [dx, dy] = pathDir(p, b, WW / 2 + b.strafe * 120, WH / 2); inp.mx = dx * 0.6; inp.my = dy * 0.6; }
+    p.input = inp; return;
+  }
   let tgt = enemies[0], td = Infinity;
   for (const q of enemies) { const d = Math.hypot(q.x - p.x, q.y - p.y); if (d < td) { td = d; tgt = q; } }
 
   if (b.think <= 0) { // incoming boomerangs (reaction-delayed)
     b.danger = null;
     for (const r of game.rangs) {
-      if (r.owner === p || r.state === 'dropped') continue;
+      if (r.owner === p || r.state === 'dropped' || sameTeam(r.owner, p)) continue;
       const rx = p.x - r.x, ry = p.y - r.y, vv = r.vx * r.vx + r.vy * r.vy; if (vv < 1) continue;
       const t = clamp((rx * r.vx + ry * r.vy) / vv, 0, 0.45);
       const cx = r.x + r.vx * t - p.x, cy = r.y + r.vy * t - p.y;
@@ -647,7 +750,7 @@ function updateBot(p, dt) {
         }
       }
     } else {
-      const los = has(p, 'ghost') || lineClear(p.x, p.y, tgt.x, tgt.y);
+      const los = has(p, 'drill') || lineClear(p.x, p.y, tgt.x, tgt.y);
       if (nearPow && nearPow.d < 120) goal = nearPow.k;
       else if (!los || td > 380) goal = tgt;
       else {
@@ -691,24 +794,26 @@ function updateBot(p, dt) {
 // ---------------------------------------------------------------- network encoding
 const RSTATE = ['out', 'return', 'dropped', 'recall', 'tele'];
 function powerBits(p) { let m = 0; for (const k of p.powers) m |= 1 << POWER_KEYS.indexOf(k); return m; }
-function bitsToPowers(m) { return POWER_KEYS.filter((k, i) => k !== 'shield' && (m & (1 << i))); }
+function bitsToPowers(m) { return POWER_KEYS.filter((k, i) => k !== 'shield' && k !== 'bamboo' && (m & (1 << i))); }
 function encodeSnapshot(g) {
   const P = g.players.map(p => [
     p.i, R0(p.x), R0(p.y), R0(p.face * 100),
-    (p.alive ? 1 : 0) | (p.hasRang ? 2 : 0) | (p.charging ? 4 : 0) | (p.shield ? 8 : 0) | (p.dashT > 0 ? 16 : 0) | (p.inv > 0 ? 32 : 0) | (p.frozen > 0 ? 64 : 0) | (p.recalling || p.steering ? 128 : 0),
+    (p.alive ? 1 : 0) | (p.hasRang ? 2 : 0) | (p.charging ? 4 : 0) | (p.shield ? 8 : 0) | (p.dashT > 0 ? 16 : 0) | (p.inv > 0 ? 32 : 0) | (p.frozen > 0 ? 64 : 0) | (p.recalling || p.steering ? 128 : 0) |
+      (p.hidden ? 256 : 0) | (p.disguised ? 512 : 0) | (p.bamboo > 0 ? 1024 : 0),
     p.charging ? R0(p.charge * 100) : 0, powerBits(p),
     R0(p.vx), R0(p.vy), R0(p.falling * 100), R0(p.aim * 100),
   ]);
   const R = g.rangs.map(r => [r.id, R0(r.x), R0(r.y), r.owner.i,
-    RSTATE.indexOf(r.state) | (r.fire ? 8 : 0) | (r.ghost ? 16 : 0) | (r.ice ? 32 : 0) | (r.boom ? 64 : 0)]);
+    RSTATE.indexOf(r.state) | (r.fire ? 8 : 0) | (r.drill ? 16 : 0) | (r.ice ? 32 : 0) | (r.boom ? 64 : 0)]);
   const K = g.pickups.map(k => [k.id, k.x, k.y, POWER_KEYS.indexOf(k.type)]);
   const L = g.trails.map(t => [t.id, R0(t.x), R0(t.y), t.k === 'fire' ? 0 : 1, R0(t.t * 10)]);
-  return { P, R, K, L, ph: g.phase };
+  const D = g.decoys.map(d => [d.id, R0(d.x), R0(d.y), d.owner.i, R0(d.face * 100)]);
+  return { P, R, K, L, D, ph: g.phase };
 }
 // Prediction state the owning client needs to replay its own inputs.
 function encodeSelf(p) {
   return [R0(p.vx * 10), R0(p.vy * 10), R0(p.dashT * 1000), R0(p.dashCd * 1000), p.prevDash ? 1 : 0, R0(p.dashDir * 1000), R0(p.x * 10), R0(p.y * 10),
-    R0(p.kbx * 10), R0(p.kby * 10), R0(p.aim * 1000), p.aimStick ? 1 : 0, R0(p.frozen * 1000), p.steeringNoMove ? 1 : 0];
+    R0(p.kbx * 10), R0(p.kby * 10), R0(p.aim * 1000), p.aimStick ? 1 : 0, R0(p.frozen * 1000), p.steeringNoMove ? 1 : 0, R0(p.bamboo * 1000)];
 }
 function encodeInput(seq, inp) {
   return [seq, R0(inp.mx * 100), R0(inp.my * 100), R0(inp.ax * 100), R0(inp.ay * 100), (inp.throw ? 1 : 0) | (inp.dash ? 2 : 0) | (inp.slash ? 4 : 0)];
@@ -719,8 +824,8 @@ function decodeInput(a) {
 }
 
 const Sim = {
-  TILE, COLS, ROWS, WW, WH, FLOOR, WALL, CRATE, PIT, TREE, PLAYER_R, PCOLORS, CHARS, POWERS, POWER_KEYS, BOT_DIFF, MAPS, T, RSTATE,
-  clamp, lerp, rand, dist2, angDiff, NO_INPUT, has,
+  TILE, COLS, ROWS, WW, WH, FLOOR, WALL, CRATE, PIT, TREE, GRASS, ICE, PAD, TEAM_COLORS, TEAM_NAMES, PLAYER_R, PCOLORS, CHARS, POWERS, POWER_KEYS, BOT_DIFF, MAPS, T, RSTATE,
+  clamp, lerp, rand, dist2, angDiff, NO_INPUT, has, walkable,
   create, use, buildMap, gridFromString, gridToString, newMatch, step, movePlayer, makeBot, tileAt,
   encodeSnapshot, encodeSelf, encodeInput, decodeInput, bitsToPowers,
 };

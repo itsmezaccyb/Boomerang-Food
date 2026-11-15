@@ -1,7 +1,7 @@
 /* Boomerang Bites — client: rendering, input, sound, menus, and online netcode.
    Game rules live in sim.js (shared with the server). */
 'use strict';
-const { TILE, COLS, ROWS, WW, WH, FLOOR, WALL, CRATE, PIT, TREE, PCOLORS, CHARS, POWERS, POWER_KEYS, MAPS, clamp, lerp, rand, dist2, angDiff } = Sim;
+const { TILE, COLS, ROWS, WW, WH, FLOOR, WALL, CRATE, PIT, TREE, GRASS, ICE, PAD, TEAM_COLORS, TEAM_NAMES, PCOLORS, CHARS, POWERS, POWER_KEYS, MAPS, clamp, lerp, rand, dist2, angDiff } = Sim;
 
 const SLOT_TYPES = [
   { id: 'human', label: 'Player', sub: 'Touch / WASD' },
@@ -22,7 +22,7 @@ function store(k, v) { try { if (v === undefined) return JSON.parse(localStorage
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------------------------------------------------------------- sprites
-const SPRITE_NAMES = CHARS.map(c => c.key).concat(['boomerang', 'brick', 'crate', 'tree', 'skull', 'crown', 'boom', 'fire', 'multi', 'ghost', 'shoe', 'shield', 'ice', 'crystal', 'sparkles']);
+const SPRITE_NAMES = CHARS.map(c => c.key).concat(['boomerang', 'brick', 'crate', 'tree', 'skull', 'crown', 'boom', 'fire', 'multi', 'shoe', 'shield', 'ice', 'crystal', 'sparkles', 'drill', 'mask', 'decoy', 'dizzy', 'herb']);
 const SPR = {};
 function loadSprites() {
   return Promise.all(SPRITE_NAMES.map(n => new Promise(res => {
@@ -84,7 +84,7 @@ const Sound = {
 
 // ---------------------------------------------------------------- settings
 const defaultSlots = [{ type: 'human', char: 0 }, { type: 'cpu2', char: 1 }, { type: 'cpu2', char: 2 }, { type: 'cpu2', char: 3 }];
-const settings = Object.assign({ slots: defaultSlots, points: 5, map: -1, name: '', server: '', camera: 'follow' }, store('bb_settings') || {});
+const settings = Object.assign({ slots: defaultSlots, points: 5, map: -1, name: '', server: '', camera: 'follow', mode: 'ffa', pw: 1, pull: true }, store('bb_settings') || {});
 if (!Array.isArray(settings.slots) || settings.slots.length !== 4) settings.slots = defaultSlots;
 const saveSettings = () => store('bb_settings', settings);
 
@@ -182,7 +182,7 @@ function mainInput(useArrows = true, usePad = true) {
 // ---------------------------------------------------------------- state
 // `game` is either a real Sim game (local play) or a mirror of the server's state (online).
 let game = { state: 'menu', online: false, grid: [], players: [], rangs: [], pickups: [], mapIndex: 0, time: 0 };
-const vfx = { parts: [], fx: [], shake: 0, rang: new Map(), pick: new Map(), floor: null };
+const vfx = { parts: [], fx: [], shake: 0, grass: [], pads: [], rang: new Map(), pick: new Map(), floor: null };
 
 // ---------------------------------------------------------------- events -> sound & visuals
 function handleEvent(type, d) {
@@ -240,13 +240,21 @@ function handleEvent(type, d) {
     }
     case 'score': {
       d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; });
-      const w = P(d.w); if (w) showBanner(`${esc(playerLabel(w))} +1`, 1100, w.color);
+      const w = P(d.w);
+      if (d.team >= 0) showBanner(`${TEAM_NAMES[d.team]} team +1`, 1100, TEAM_COLORS[d.team]);
+      else if (w) showBanner(`${esc(playerLabel(w))} +1`, 1100, w.color);
       break;
     }
+    case 'pad': Sound.teleport(); vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.4, col: '#c9a7ff' }, { type: 'ring', x: d.x2, y: d.y2, t: 0, max: 0.4, col: '#c9a7ff' }); if (game.online && net.pred) net.smooth = { x: 0, y: 0 }; break;
+    case 'decoy': Sound.teleport(); vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.35, col: '#fff' }); break;
+    case 'disguise': case 'poof':
+      Sound.shove();
+      for (let i = 0; i < 12; i++) { const a = rand(0, 7), sp = rand(40, 140); vfx.parts.push({ x: d.x, y: d.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.45, max: 0.45, col: 'rgba(240,240,240,0.85)', r: rand(4, 8) }); }
+      break;
     case 'draw': d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; }); showBanner('Draw!', 1100); break;
     case 'result': {
       d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; });
-      setTimeout(() => showResult(P(d.w)), 300);
+      setTimeout(() => showResult(P(d.w), d.team), 300);
       break;
     }
   }
@@ -277,14 +285,19 @@ function updateVfx(dt) {
 }
 
 // ---------------------------------------------------------------- local play
+function applyTeamColors() {
+  const teams = (game.opts && game.opts.mode === 'teams') || game.mode === 'teams';
+  for (const p of game.players) p.color = teams ? TEAM_COLORS[p.i % 2] : PCOLORS[p.i];
+}
 function startLocal() {
   const specs = [];
   settings.slots.forEach((s, i) => { if (s.type !== 'off') specs.push({ i, type: s.type.startsWith('cpu') ? s.type : 'local', char: s.char }); });
   if (specs.length < 2) return;
   const g = Sim.create();
   game = Object.assign(g, { state: 'play', online: false });
-  Sim.newMatch(g, specs, settings.points, settings.map);
+  Sim.newMatch(g, specs, settings.points, settings.map, { mode: settings.mode, pw: settings.pw, pull: settings.pull });
   g.players.forEach(p => { p.src = settings.slots[p.i].type; });
+  applyTeamColors();
   enterGame();
   drainLocalEvents();
 }
@@ -362,8 +375,9 @@ const net = {
       players: m.players.map(p => ({ i: p.i, char: CHARS[p.char], color: PCOLORS[p.i], name: p.name, bot: p.type !== 'net', score: 0,
         x: 0, y: 0, vx: 0, vy: 0, face: 0, alive: true, hasRang: true, charging: false, charge: 0, shield: false, dashT: 0, dashDir: 0,
         inv: 0, falling: 0, powers: [], slashT: 0, slashArmed: true, walkT: 0, frozen: 0, recalling: false, aim: 0 })),
-      trails: [],
+      trails: [], decoys: [],
     };
+    game.mode = m.mode || 'ffa'; applyTeamColors();
     this.slot = m.you; this.snaps = []; this.clock = null; this.hist = []; this.pred = null; this.seq = 0; this.acc = 0;
     this.smooth = { x: 0, y: 0 };
     enterGame();
@@ -390,7 +404,7 @@ const net = {
     const pred = {
       x: s[6] / 10, y: s[7] / 10, vx: s[0] / 10, vy: s[1] / 10, dashT: s[2] / 1000, dashCd: s[3] / 1000, prevDash: !!s[4], dashDir: s[5] / 1000,
       face: me[3] / 100, powers: Sim.bitsToPowers(me[6]), shield: !!(me[4] & 8), charging: !!(me[4] & 4), walkT: 0,
-      kbx: s[8] / 10, kby: s[9] / 10, aim: s[10] / 1000, aimStick: !!s[11], frozen: s[12] / 1000, steeringNoMove: !!s[13],
+      kbx: s[8] / 10, kby: s[9] / 10, aim: s[10] / 1000, aimStick: !!s[11], frozen: s[12] / 1000, steeringNoMove: !!s[13], bamboo: (s[14] || 0) / 1000,
     };
     this.hist = this.hist.filter(h => h.seq > m.a);
     if (this.canPredict()) { Sim.use(game); for (const h of this.hist) this.simulate(pred, h.inp); }
@@ -449,6 +463,7 @@ const net = {
       p.dashT = f & 16 ? 0.1 : 0; p.inv = f & 32 ? 0.1 : 0; p.charge = e[5] / 100;
       p.powers = Sim.bitsToPowers(e[6]); p.vx = e[7]; p.vy = e[8]; p.falling = e[9] / 100;
       p.frozen = f & 64 ? 1 : 0; p.recalling = !!(f & 128); p.aim = e[10] / 100;
+      p.hidden = !!(f & 256); p.disguised = !!(f & 512); p.bamboo = f & 1024 ? 1 : 0;
       p.dashDir = Math.atan2(p.vy, p.vx);
       if (p.i === this.slot && this.pred && p.alive && !p.falling) { // our own fighter: predicted, not delayed
         const q = this.pred;
@@ -464,6 +479,8 @@ const net = {
     });
     game.trails = (b.L || []).map(l => ({ id: l[0], x: l[1], y: l[2], k: l[3] ? 'ice' : 'fire', t: l[4] / 10 }));
     game.pickups = b.K.map(k => ({ id: k[0], x: k[1], y: k[2], type: POWER_KEYS[k[3]] }));
+    const dA = new Map((a.D || []).map(x => [x[0], x]));
+    game.decoys = (b.D || []).map(x => { const y = dA.get(x[0]) || x; return { id: x[0], x: lerp(y[1], x[1], t), y: lerp(y[2], x[2], t), owner: game.players.find(p => p.i === x[3]) || game.players[0], face: x[4] / 100, vx: x[1] - y[1], vy: x[2] - y[2] }; });
   },
 };
 
@@ -471,7 +488,7 @@ const net = {
 function renderFloor() {
   if (!game.grid.length || !SPR.brick) return;
   const c = vfx.floor || (vfx.floor = document.createElement('canvas'));
-  c.width = WW * 2; c.height = WH * 2; const g = c.getContext('2d'); g.scale(2, 2);
+  c.width = WW * 2; c.height = WH * 2; const g = c.getContext('2d'); g.scale(2, 2); vfx.grass = []; vfx.pads = [];
   const theme = [['#f6e7c8', '#efdcb6'], ['#dfe9f2', '#cfdbe7'], ['#f3dccf', '#ead0c1'], ['#cfe6b8', '#c2dca9'], ['#efe3f3', '#e3d5ea']][game.mapIndex % 5];
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) { g.fillStyle = theme[(x + y) & 1]; g.fillRect(x * TILE, y * TILE, TILE, TILE); }
   g.fillStyle = 'rgba(60,30,10,0.13)';
@@ -485,7 +502,18 @@ function renderFloor() {
     if (v === WALL) { g.fillStyle = '#7a3b2e'; g.fillRect(px, py, TILE, TILE); g.drawImage(SPR.brick, px - 3, py - 3, TILE + 6, TILE + 6); }
     else if (v === CRATE) g.drawImage(SPR.crate, px - 1, py - 2, TILE + 2, TILE + 2);
     else if (v === TREE) g.drawImage(SPR.tree, px - 6, py - 12, TILE + 12, TILE + 12);
-    else if (v === PIT) {
+    else if (v === GRASS) {
+      g.fillStyle = (x + y) & 1 ? '#78bf63' : '#6fb45b'; g.fillRect(px, py, TILE, TILE);
+      vfx.grass.push([px, py, (x * 7 + y * 3) % 5]);
+    } else if (v === ICE) {
+      g.fillStyle = (x + y) & 1 ? '#d9f3ff' : '#cbecfb'; g.fillRect(px, py, TILE, TILE);
+      g.strokeStyle = 'rgba(255,255,255,0.8)'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(px + 8, py + 30); g.lineTo(px + 22, py + 16); g.moveTo(px + 26, py + 40); g.lineTo(px + 36, py + 30); g.stroke();
+    } else if (v === PAD) {
+      g.fillStyle = '#3b2a63'; g.beginPath(); g.arc(px + TILE / 2, py + TILE / 2, 19, 0, 7); g.fill();
+      g.strokeStyle = '#b48cff'; g.lineWidth = 3; g.stroke();
+      vfx.pads.push([px + TILE / 2, py + TILE / 2]);
+    } else if (v === PIT) {
       g.fillStyle = '#9e1b12'; g.fillRect(px, py, TILE, TILE);
       if (!(y > 0 && game.grid[y - 1][x] === PIT)) { g.fillStyle = '#5c0d08'; g.fillRect(px, py, TILE, 10); }
     }
@@ -528,7 +556,7 @@ function updateCamera(dt) {
 function drawOffscreen(T) {
   const m = 30, top = view.safe.t + 50, bot = view.h - view.safe.b - m, left = view.safe.l + m, right = view.w - view.safe.r - m;
   for (const p of game.players) {
-    if (p === cam.target || !p.alive) continue;
+    if (p === cam.target || !p.alive || visAlpha(p, cam.target) < 1) continue;
     const sx = cam.ox + p.x * cam.s, sy = cam.oy + p.y * cam.s;
     if (sx > left - m && sx < right + m && sy > top - m && sy < bot + m) continue;
     const ex = clamp(sx, left, right), ey = clamp(sy, top, bot), a = Math.atan2(sy - ey, sx - ex);
@@ -587,8 +615,22 @@ function render(T) {
     ctx.strokeStyle = r.owner.color; ctx.globalAlpha = 0.45; ctx.lineWidth = 2; ctx.setLineDash([4, 6]); ctx.lineDashOffset = T * 60;
     ctx.beginPath(); ctx.moveTo(r.owner.x, r.owner.y); ctx.lineTo(r.x, r.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
-  const ps = game.players.filter(p => p.alive).sort((a, b) => a.y - b.y);
-  for (const p of ps) drawPlayer(p, T);
+  for (const [cx, cy] of vfx.pads) drawSpr(ctx, 'multi', cx, cy, 30, T * 3, 0.75);
+  const V = viewerPlayer();
+  const ps = game.players.filter(p => p.alive).concat((game.decoys || []).map(decoyView)).sort((a, b) => a.y - b.y);
+  for (const p of ps) {
+    const al = visAlpha(p, V);
+    if (p.disguised && al < 1 && p !== V) { drawSpr(ctx, 'crate', p.x, p.y - 4, TILE + 2); continue; } // looks like any other box
+    if (al <= 0) continue;
+    ctx.globalAlpha = al; drawPlayer(p, T); ctx.globalAlpha = 1;
+  }
+  for (const [gx, gy, s] of vfx.grass) { // tall grass drawn over everyone
+    const inside = V && V.alive && Math.floor(V.x / TILE) === gx / TILE && Math.floor(V.y / TILE) === gy / TILE;
+    ctx.globalAlpha = inside ? 0.45 : 0.95;
+    const sw = Math.sin(T * 2 + s) * 0.08;
+    drawSpr(ctx, 'herb', gx + 14, gy + 20, 30, -0.3 + sw); drawSpr(ctx, 'herb', gx + 34, gy + 22, 30, 0.35 + sw); drawSpr(ctx, 'herb', gx + 24, gy + 34, 30, sw);
+  }
+  ctx.globalAlpha = 1;
 
   for (const r of game.rangs) if (r.state !== 'dropped') {
     const v = vfx.rang.get(r.id) || { trail: [], spin: 0 }, sz = 24;
@@ -639,6 +681,27 @@ function render(T) {
   }
 }
 
+// Who is this screen "playing as"? Hidden snacks are invisible to them unless close.
+function viewerPlayer() {
+  if (game.online) return net.tv ? null : game.players.find(p => p.i === net.slot) || null;
+  const humans = game.players.filter(p => !p.bot);
+  return humans.length === 1 ? humans[0] : null;
+}
+function visAlpha(p, V) {
+  const sneaky = p.hidden || p.disguised;
+  if (p === V || (p.decoyOf && p.decoyOf === V)) return sneaky ? 0.55 : 1;
+  if (!sneaky) return 1;
+  if (V && V.alive && Math.hypot(p.x - V.x, p.y - V.y) < TUNE.revealDist) return 1;
+  if (V && game.players.length && isTeammate(p, V)) return 0.6;
+  return V ? 0 : 0.3; // shared screens (TV, couch) show a faint outline
+}
+function isTeammate(a, b) { return ((game.opts && game.opts.mode === 'teams') || game.mode === 'teams') && a.i % 2 === b.i % 2; }
+function decoyView(d) {
+  const o = d.owner;
+  return Object.assign({}, o, { x: d.x, y: d.y, vx: d.vx * (game.online ? 30 : 1), vy: d.vy * (game.online ? 30 : 1), face: d.face, hasRang: true, charging: false, slashT: 0,
+    shield: false, frozen: 0, falling: 0, inv: 0, dashT: 0, hidden: false, disguised: false, bamboo: 0, decoyOf: o, walkT: (o.walkT || 0) + 1.3 });
+}
+
 function drawPlayer(p, T) {
   const moving = Math.hypot(p.vx, p.vy) > 30;
   const fall = p.falling > 0 ? clamp(p.falling / 0.45, 0, 1) : 1;
@@ -646,6 +709,7 @@ function drawPlayer(p, T) {
   const size = 40 * fall;
   ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 15, 16 * fall, 6 * fall, 0, 0, 7); ctx.fill();
   ctx.strokeStyle = p.color; ctx.lineWidth = 3; ctx.beginPath(); ctx.ellipse(p.x, p.y + 15, 19 * fall, 8 * fall, 0, 0, 7); ctx.stroke();
+  if (p.bamboo > 0) drawSpr(ctx, 'dizzy', p.x - 18, p.y - 30, 16, Math.sin(T * 8) * 0.4);
   if (!p.falling) {
     const ax = p.x + Math.cos(p.face) * 30, ay = p.y + 6 + Math.sin(p.face) * 22;
     ctx.save(); ctx.translate(ax, ay); ctx.rotate(p.face); ctx.fillStyle = p.color;
@@ -795,6 +859,9 @@ function buildMenu() {
   });
   buildSeg($('seg-points'), settings.points, (n) => { settings.points = n; saveSettings(); buildMenu(); });
   $('btn-map').textContent = settings.map < 0 ? 'Random' : MAPS[settings.map].name;
+  $('btn-mode').textContent = MODE_LABEL[settings.mode] || MODE_LABEL.ffa;
+  $('btn-pw').textContent = PW_LABEL[settings.pw] || 'Normal';
+  $('btn-pull').textContent = settings.pull ? 'On' : 'Off';
   $('btn-sound').textContent = Sound.on ? 'On' : 'Off';
   $('btn-camera').textContent = settings.camera === 'whole' ? 'Whole arena' : 'Follow me';
   const active = settings.slots.filter(s => s.type !== 'off').length;
@@ -841,6 +908,12 @@ function renderLobby() {
   });
   buildSeg($('lobby-points'), L.points, (n) => net.send({ t: 'cfg', points: n }), !isHost);
   const mb = $('lobby-map'); mb.textContent = L.map < 0 ? 'Random' : MAPS[L.map].name; mb.disabled = !isHost;
+  const mo = $('lobby-mode'); mo.textContent = MODE_LABEL[L.mode] || MODE_LABEL.ffa; mo.disabled = !isHost;
+  mo.onclick = () => net.send({ t: 'cfg', mode: L.mode === 'teams' ? 'ffa' : 'teams' });
+  const pw = $('lobby-pw'); pw.textContent = PW_LABEL[L.pw] || 'Normal'; pw.disabled = !isHost;
+  pw.onclick = () => net.send({ t: 'cfg', pw: nextPw(L.pw) });
+  const pu = $('lobby-pull'); pu.textContent = L.pull === false ? 'Off' : 'On'; pu.disabled = !isHost;
+  pu.onclick = () => net.send({ t: 'cfg', pull: L.pull === false });
   mb.onclick = () => net.send({ t: 'cfg', map: L.map + 1 >= MAPS.length ? -1 : L.map + 1 });
   $('btn-lobby-start').classList.toggle('hidden', !isHost);
   const fighters = L.slots.filter(s => s.type === 'net' || s.type.startsWith('cpu')).length;
@@ -853,6 +926,13 @@ function renderLobby() {
 function onlineStatus(msg) { $('online-status').textContent = msg; }
 
 $('btn-map').onclick = () => { settings.map = settings.map + 1 >= MAPS.length ? -1 : settings.map + 1; saveSettings(); buildMenu(); };
+const MODE_LABEL = { ffa: 'Free-for-all', teams: 'Teams (2v2)' };
+const PW_LABEL = { 0: 'Off', 0.5: 'Few', 1: 'Normal', 2: 'Lots' };
+const PW_CYCLE = [1, 2, 0, 0.5];
+const nextPw = (v) => PW_CYCLE[(PW_CYCLE.indexOf(v) + 1) % PW_CYCLE.length];
+$('btn-mode').onclick = () => { settings.mode = settings.mode === 'teams' ? 'ffa' : 'teams'; saveSettings(); buildMenu(); };
+$('btn-pw').onclick = () => { settings.pw = nextPw(settings.pw); saveSettings(); buildMenu(); };
+$('btn-pull').onclick = () => { settings.pull = !settings.pull; saveSettings(); buildMenu(); };
 $('btn-camera').onclick = () => { settings.camera = settings.camera === 'whole' ? 'follow' : 'whole'; saveSettings(); buildMenu(); };
 $('btn-tv').onclick = () => { Sound.unlock(); saveOnlineFields(); net.tv = true; net.connect({ t: 'host', name: 'TV', tv: true }); };
 $('btn-host').addEventListener('click', () => { net.tv = false; }, true);
@@ -909,10 +989,11 @@ function exitGameToLobby() {
   show('result', false); show('pause', false); show('btn-pause', false); show('banner', false);
   document.body.classList.remove('playing'); show('lobby');
 }
-function showResult(w) {
+function showResult(w, team) {
   if (!w) return;
   game.state = 'result'; Sound.win(); show('btn-pause', false); show('banner', false); show('pause', false);
-  $('result-title').textContent = `${playerLabel(w)} wins!`; $('result-title').style.color = w.color;
+  if (team >= 0) { $('result-title').textContent = `${TEAM_NAMES[team]} team wins!`; $('result-title').style.color = TEAM_COLORS[team]; }
+  else { $('result-title').textContent = `${playerLabel(w)} wins!`; $('result-title').style.color = w.color; }
   const st = $('standings'); st.innerHTML = '';
   game.players.slice().sort((a, b) => b.score - a.score).forEach(p => {
     const d = document.createElement('div'); d.className = 'stand';
