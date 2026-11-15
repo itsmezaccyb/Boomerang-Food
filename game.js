@@ -27,7 +27,7 @@ const SPR = {};
 function loadSprites() {
   return Promise.all(SPRITE_NAMES.map(n => new Promise(res => {
     const img = new Image();
-    img.onload = () => { const c = document.createElement('canvas'); c.width = c.height = 96; c.getContext('2d').drawImage(img, 0, 0, 96, 96); SPR[n] = c; res(); };
+    img.onload = () => { const c = document.createElement('canvas'); c.width = c.height = 160; c.getContext('2d').drawImage(img, 0, 0, 160, 160); SPR[n] = c; res(); };
     img.onerror = () => res();
     img.src = 'sprites/' + n + '.svg';
   })));
@@ -79,7 +79,7 @@ const Sound = {
 
 // ---------------------------------------------------------------- settings
 const defaultSlots = [{ type: 'human', char: 0 }, { type: 'cpu2', char: 1 }, { type: 'cpu2', char: 2 }, { type: 'cpu2', char: 3 }];
-const settings = Object.assign({ slots: defaultSlots, points: 5, map: -1, name: '', server: '' }, store('bb_settings') || {});
+const settings = Object.assign({ slots: defaultSlots, points: 5, map: -1, name: '', server: '', camera: 'follow' }, store('bb_settings') || {});
 if (!Array.isArray(settings.slots) || settings.slots.length !== 4) settings.slots = defaultSlots;
 const saveSettings = () => store('bb_settings', settings);
 
@@ -323,7 +323,7 @@ const net = {
 
   onMessage(m) {
     switch (m.t) {
-      case 'room': this.you = m.you; this.code = m.code; show('online', false); show('lobby'); break;
+      case 'room': this.you = m.you; this.code = m.code; this.lan = m.lan || []; this.port = m.port; show('online', false); show('lobby'); break;
       case 'lobby':
         this.lobby = m;
         if (!game.online || game.state === 'result') {
@@ -393,7 +393,7 @@ const net = {
       this.acc -= NET_STEP; steps++;
       const inp = game.state === 'play' ? mainInput() : ZERO;
       this.seq++;
-      this.send({ t: 'i', d: Sim.encodeInput(this.seq, inp) });
+      if (this.slot >= 0) this.send({ t: 'i', d: Sim.encodeInput(this.seq, inp) });
       this.hist.push({ seq: this.seq, inp });
       if (this.hist.length > 120) this.hist.shift();
       if (this.pred && this.canPredict()) { Sim.use(game); this.simulate(this.pred, inp); }
@@ -451,7 +451,7 @@ const net = {
 function renderFloor() {
   if (!game.grid.length || !SPR.brick) return;
   const c = vfx.floor || (vfx.floor = document.createElement('canvas'));
-  c.width = WW; c.height = WH; const g = c.getContext('2d');
+  c.width = WW * 2; c.height = WH * 2; const g = c.getContext('2d'); g.scale(2, 2);
   const theme = [['#f6e7c8', '#efdcb6'], ['#dfe9f2', '#cfdbe7'], ['#f3dccf', '#ead0c1'], ['#cfe6b8', '#c2dca9'], ['#efe3f3', '#e3d5ea']][game.mapIndex % 5];
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) { g.fillStyle = theme[(x + y) & 1]; g.fillRect(x * TILE, y * TILE, TILE, TILE); }
   g.fillStyle = 'rgba(60,30,10,0.13)';
@@ -472,14 +472,65 @@ function renderFloor() {
   }
 }
 
+// ---------------------------------------------------------------- camera
+// Phones follow their own fighter, zoomed in. The big screen (and anyone who's out) sees the whole arena.
+const cam = { x: WW / 2, y: WH / 2, s: 1, ox: 0, oy: 0, ready: false, target: null };
+const ZOOM_TILES = 6.5; // how many tiles tall the follow camera shows
+function followTarget() {
+  if (settings.camera === 'whole' || game.state === 'menu') return null;
+  let me = null;
+  if (game.online) me = net.tv ? null : game.players.find(p => p.i === net.slot);
+  else { const humans = game.players.filter(p => !p.bot); if (humans.length === 1) me = humans[0]; }
+  return me && me.alive && !(me.falling > 0) ? me : null;
+}
+function updateCamera(dt) {
+  const aw = view.w - view.safe.l - view.safe.r, ah = view.h - view.safe.t - view.safe.b;
+  const fit = Math.min(aw / WW, ah / WH);
+  const t = cam.target = followTarget();
+  let zs = fit, cx = WW / 2, cy = WH / 2;
+  if (t) {
+    zs = Math.max(fit, Math.min(ah / (TILE * ZOOM_TILES), aw / (TILE * 9)));
+    const look = t.charging ? 40 + 90 * clamp((t.charge - 0.16) / 0.55, 0, 1) : 25; // peek where you're aiming
+    cx = t.x + Math.cos(t.face) * look; cy = t.y + Math.sin(t.face) * look;
+  }
+  const k = cam.ready ? 1 - Math.exp(-dt * 7) : 1;
+  cam.s = lerp(cam.s, zs, cam.ready ? 1 - Math.exp(-dt * 4) : 1);
+  const hw = aw / 2 / cam.s, hh = ah / 2 / cam.s;
+  cx = hw * 2 >= WW ? WW / 2 : clamp(cx, hw, WW - hw);
+  cy = hh * 2 >= WH ? WH / 2 : clamp(cy, hh, WH - hh);
+  cam.x = lerp(cam.x, cx, k); cam.y = lerp(cam.y, cy, k);
+  cam.x = hw * 2 >= WW ? WW / 2 : clamp(cam.x, hw, WW - hw);
+  cam.y = hh * 2 >= WH ? WH / 2 : clamp(cam.y, hh, WH - hh);
+  cam.ox = view.safe.l + aw / 2 - cam.x * cam.s; cam.oy = view.safe.t + ah / 2 - cam.y * cam.s;
+  cam.ready = true;
+}
+// Arrows at the screen edge pointing to fighters you can't see.
+function drawOffscreen(T) {
+  const m = 30, top = view.safe.t + 50, bot = view.h - view.safe.b - m, left = view.safe.l + m, right = view.w - view.safe.r - m;
+  for (const p of game.players) {
+    if (p === cam.target || !p.alive) continue;
+    const sx = cam.ox + p.x * cam.s, sy = cam.oy + p.y * cam.s;
+    if (sx > left - m && sx < right + m && sy > top - m && sy < bot + m) continue;
+    const ex = clamp(sx, left, right), ey = clamp(sy, top, bot), a = Math.atan2(sy - ey, sx - ex);
+    ctx.save(); ctx.translate(ex, ey);
+    ctx.rotate(a); ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.moveTo(26, 0); ctx.lineTo(14, -8); ctx.lineTo(14, 8); ctx.closePath(); ctx.fill();
+    ctx.rotate(-a);
+    ctx.fillStyle = 'rgba(20,12,40,0.7)'; ctx.beginPath(); ctx.arc(0, 0, 17, 0, 7); ctx.fill();
+    ctx.strokeStyle = p.color; ctx.lineWidth = 3; ctx.stroke();
+    ctx.drawImage(SPR[p.char.key], -12, -12, 24, 24);
+    ctx.restore();
+  }
+}
+
 function render(T) {
-  const { dpr, scale, ox, oy } = view;
+  const { dpr } = view, scale = cam.s, ox = cam.ox, oy = cam.oy;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.fillStyle = '#1d1630'; ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (!vfx.floor) return;
   const sh = vfx.shake, sx = sh ? rand(-sh, sh) : 0, sy = sh ? rand(-sh, sh) : 0;
   ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (ox + sx), dpr * (oy + sy));
-  ctx.drawImage(vfx.floor, 0, 0);
+  ctx.drawImage(vfx.floor, 0, 0, WW, WH);
   if (game.state === 'menu' || game.grid.length !== ROWS) return;
 
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) if (game.grid[y][x] === PIT) {
@@ -542,6 +593,7 @@ function render(T) {
   ctx.globalAlpha = 1;
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (cam.target) drawOffscreen(T);
   drawScores();
   if (game.state === 'play') drawTouchControls();
   if (game.online) {
@@ -691,6 +743,7 @@ function buildMenu() {
   buildSeg($('seg-points'), settings.points, (n) => { settings.points = n; saveSettings(); buildMenu(); });
   $('btn-map').textContent = settings.map < 0 ? 'Random' : MAPS[settings.map].name;
   $('btn-sound').textContent = Sound.on ? 'On' : 'Off';
+  $('btn-camera').textContent = settings.camera === 'whole' ? 'Whole arena' : 'Follow me';
   const active = settings.slots.filter(s => s.type !== 'off').length;
   $('btn-play').disabled = active < 2; $('btn-play').style.opacity = active < 2 ? 0.5 : 1;
   $('btn-play').textContent = active < 2 ? 'Need 2+ fighters' : 'Play';
@@ -704,9 +757,20 @@ function buildSeg(el, cur, onPick, disabled) {
   });
 }
 
+function canManage() {
+  const L = net.lobby; if (!L) return false;
+  return L.host === net.you || (L.tv && L.slots.some(s => s.type === 'net' && s.owner === net.you));
+}
+function joinURL() {
+  const local = /^(localhost|127\.|\[::1\])/.test(location.hostname);
+  const host = local && net.lan && net.lan.length ? `${net.lan[0]}:${net.port}` : location.host;
+  return `${local ? 'http:' : location.protocol}//${host}/?join=${net.code}`;
+}
 function renderLobby() {
   const L = net.lobby; if (!L) return;
-  const isHost = L.host === net.you;
+  const isHost = canManage();
+  document.body.classList.toggle('tv', !!net.tv);
+  $('lobby-join').innerHTML = net.tv ? `On your phone, open <b>${esc(joinURL())}</b><br>or go to <b>${esc(joinURL().replace(/\/\?join=.*/, ''))}</b> → Play online → code <b>${esc(L.code)}</b>` : '';
   $('lobby-code').textContent = L.code;
   const el = $('lobby-slots'); el.innerHTML = '';
   L.slots.forEach((s, i) => {
@@ -731,11 +795,15 @@ function renderLobby() {
   $('btn-lobby-start').style.opacity = fighters < 2 ? 0.5 : 1;
   $('lobby-wait').classList.toggle('hidden', isHost);
   $('lobby-wait').textContent = L.playing ? 'Match in progress — you\'ll join the next one.' : 'Waiting for the host to start…';
-  $('lobby-msg').textContent = isHost ? 'Tap an empty slot to add a CPU. Friends join with the code.' : '';
+  $('lobby-msg').textContent = isHost ? (net.tv ? 'Click an empty slot to add a CPU.' : 'Tap an empty slot to add a CPU. Friends join with the code.') : '';
 }
 function onlineStatus(msg) { $('online-status').textContent = msg; }
 
 $('btn-map').onclick = () => { settings.map = settings.map + 1 >= MAPS.length ? -1 : settings.map + 1; saveSettings(); buildMenu(); };
+$('btn-camera').onclick = () => { settings.camera = settings.camera === 'whole' ? 'follow' : 'whole'; saveSettings(); buildMenu(); };
+$('btn-tv').onclick = () => { Sound.unlock(); saveOnlineFields(); net.tv = true; net.connect({ t: 'host', name: 'TV', tv: true }); };
+$('btn-host').addEventListener('click', () => { net.tv = false; }, true);
+$('btn-join').addEventListener('click', () => { net.tv = false; }, true);
 $('btn-sound').onclick = () => { Sound.on = !Sound.on; store('bb_sound', Sound.on); Sound.unlock(); Sound.tick(); buildMenu(); };
 $('btn-help').onclick = () => show('help');
 $('btn-help-close').onclick = () => show('help', false);
@@ -766,7 +834,7 @@ $('btn-resume').onclick = togglePause;
 $('btn-quit').onclick = () => { if (game.online) { net.send({ t: 'leave' }); net.close(); } toMenu(); };
 $('btn-rematch').onclick = () => { if (game.online) net.send({ t: 'start' }); else startLocal(); };
 $('btn-menu').onclick = () => {
-  if (game.online) { if (net.lobby && net.lobby.host === net.you) net.send({ t: 'lobby' }); else { net.send({ t: 'leave' }); net.close(); toMenu(); } }
+  if (game.online) { if (canManage()) net.send({ t: 'lobby' }); else { net.send({ t: 'leave' }); net.close(); toMenu(); } }
   else toMenu();
 };
 
@@ -798,7 +866,7 @@ function showResult(w) {
     d.innerHTML = `<img src="sprites/${p.char.key}.svg" alt=""><span class="bar" style="color:${p.color}">${esc(playerLabel(p))}${p.bot ? ' <small style="opacity:.6">CPU</small>' : ''}</span><span class="pts">${p.score}</span>`;
     st.appendChild(d);
   });
-  const host = !game.online || (net.lobby && net.lobby.host === net.you);
+  const host = !game.online || canManage();
   $('btn-rematch').classList.toggle('hidden', !host);
   $('btn-menu').textContent = game.online ? (host ? 'Back to lobby' : 'Leave') : 'Menu';
   $('result-wait').classList.toggle('hidden', host);
@@ -829,6 +897,7 @@ function frame(now) {
     drainLocalEvents();
     updateVfx(dt * (game.timeScale || 1));
   }
+  updateCamera(dt);
   render(now / 1000);
 }
 
@@ -842,6 +911,7 @@ loadSprites().then(() => {
   // Deep link: ?join=ABCD opens the online screen with the code filled in
   const q = new URLSearchParams(location.search);
   if (q.get('server')) { settings.server = q.get('server'); saveSettings(); }
+  if (q.has('tv')) { $('btn-online').onclick(); $('btn-tv').onclick(); }
   if (q.get('join')) { $('btn-online').onclick(); $('in-code').value = q.get('join').toUpperCase().slice(0, 4); }
 });
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {

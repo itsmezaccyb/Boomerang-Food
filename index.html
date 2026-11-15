@@ -36,6 +36,7 @@
         <h2>Match</h2>
         <div class="row"><span>Points to win</span><div class="seg" id="seg-points"></div></div>
         <div class="row"><span>Arena</span><button class="pill" id="btn-map"></button></div>
+        <div class="row"><span>Camera</span><button class="pill" id="btn-camera"></button></div>
         <div class="row"><span>Sound</span><button class="pill" id="btn-sound"></button></div>
         <button id="btn-play" class="big">Play</button>
         <button id="btn-online" class="big alt">Play online</button>
@@ -58,6 +59,7 @@
       <input id="in-code" maxlength="4" autocapitalize="characters" autocomplete="off" placeholder="CODE">
       <button class="big" id="btn-join">Join</button>
     </div>
+    <button class="pill wide" id="btn-tv">📺 Big screen — show the whole arena here</button>
     <p id="online-status" class="status"></p>
     <button class="link" id="btn-edit-server">Change server</button>
     <button class="pill wide" id="btn-online-back">Back</button>
@@ -71,6 +73,7 @@
       <div class="panel">
         <h2>Room</h2>
         <div class="code" id="lobby-code">----</div>
+        <p class="join-info" id="lobby-join"></p>
         <div id="lobby-slots"></div>
         <p class="hint" id="lobby-msg"></p>
       </div>

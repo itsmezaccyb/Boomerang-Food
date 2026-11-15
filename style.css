@@ -136,3 +136,9 @@ input:focus { border-color: var(--accent); }
   .code { font-size: 34px; }
   .link { margin-top: 6px; }
 }
+
+.join-info { text-align: center; color: var(--muted); font-size: 14px; margin: 0 0 8px; line-height: 1.5; }
+.join-info:empty { display: none; }
+.join-info b { color: var(--ink); }
+body.tv .code { font-size: 72px; }
+body.tv .join-info { font-size: 18px; }

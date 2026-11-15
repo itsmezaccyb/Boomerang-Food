@@ -59,22 +59,32 @@ function freeChar(room, except) {
 }
 function lobbyState(room) {
   return {
-    t: 'lobby', code: room.code, host: room.host, playing: !!room.g, points: room.points, map: room.map,
+    t: 'lobby', code: room.code, host: room.host, tv: !!room.tvHost, playing: !!room.g, points: room.points, map: room.map,
     slots: room.slots.map(s => ({ type: s.type, owner: s.owner || 0, char: s.char, name: s.owner ? (room.clients.get(s.owner) || {}).name : '' })),
   };
 }
 function broadcastLobby(room) { const msg = JSON.stringify(lobbyState(room)); for (const c of room.clients.values()) send(c.ws, msg); }
 
-function joinRoom(ws, room) {
+function lanAddrs() {
+  const nets = require('os').networkInterfaces();
+  return Object.values(nets).flat().filter(n => n && n.family === 'IPv4' && !n.internal).map(n => n.address);
+}
+// The host can manage the room; in a big-screen room, any seated player can too (the TV may have no keyboard).
+function canManage(room, ws) {
+  if (room.host === ws.id) return true;
+  const c = room.clients.get(ws.id);
+  return !!(room.tvHost && c && c.slot >= 0);
+}
+function joinRoom(ws, room, spectator) {
   ws.room = room;
-  const c = { ws, id: ws.id, name: ws.name, queue: [], last: Sim.NO_INPUT, ack: 0, slot: -1 };
+  const c = { ws, id: ws.id, name: ws.name, queue: [], last: Sim.NO_INPUT, ack: 0, slot: -1, spectator: !!spectator };
   room.clients.set(ws.id, c);
   if (!room.g) takeSlot(room, c);
-  send(ws, { t: 'room', code: room.code, you: ws.id });
+  send(ws, { t: 'room', code: room.code, you: ws.id, lan: lanAddrs(), port: PORT });
   broadcastLobby(room);
 }
 function takeSlot(room, c) {
-  if (c.slot >= 0) return;
+  if (c.slot >= 0 || c.spectator) return;
   const i = room.slots.findIndex(s => s.type === 'open');
   if (i < 0) return; // room full: spectate
   room.slots[i] = { type: 'net', owner: c.id, char: freeChar(room, i) };
@@ -92,7 +102,7 @@ function leaveRoom(ws) {
     } else room.slots[c.slot] = { type: 'open' };
   }
   if (!room.clients.size) { rooms.delete(room.code); return; }
-  if (room.host === ws.id) room.host = room.clients.keys().next().value;
+  if (room.host === ws.id) { room.host = room.clients.keys().next().value; room.tvHost = false; }
   broadcastLobby(room);
 }
 
@@ -133,8 +143,8 @@ wss.on('connection', (ws) => {
       case 'host': {
         leaveRoom(ws); ws.name = cleanName(m.name);
         const r = { code: makeCode(), clients: new Map(), host: ws.id, points: 5, map: -1, g: null, tick: 0, events: [],
-          slots: [{ type: 'open' }, { type: 'open' }, { type: 'open' }, { type: 'open' }] };
-        rooms.set(r.code, r); joinRoom(ws, r);
+          slots: [{ type: 'open' }, { type: 'open' }, { type: 'open' }, { type: 'open' }], tvHost: !!m.tv };
+        rooms.set(r.code, r); joinRoom(ws, r, !!m.tv);
         return;
       }
       case 'join': {
@@ -145,7 +155,7 @@ wss.on('connection', (ws) => {
       }
       case 'leave': leaveRoom(ws); return;
       case 'slot': { // host cycles a non-player slot
-        if (!room || room.host !== ws.id || room.g) return;
+        if (!room || !canManage(room, ws) || room.g) return;
         const s = room.slots[m.n | 0]; if (!s || s.type === 'net') return;
         const type = SLOT_CYCLE[(SLOT_CYCLE.indexOf(s.type) + 1) % SLOT_CYCLE.length];
         const n = m.n | 0;
@@ -158,19 +168,19 @@ wss.on('connection', (ws) => {
         const c = room.clients.get(ws.id);
         const n = m.n === undefined ? c.slot : m.n | 0;
         const s = room.slots[n]; if (!s) return;
-        if (!(s.type === 'net' && s.owner === ws.id) && !(s.type.startsWith('cpu') && room.host === ws.id)) return;
+        if (!(s.type === 'net' && s.owner === ws.id) && !(s.type.startsWith('cpu') && canManage(room, ws))) return;
         const used = room.slots.filter((o, j) => j !== n && o.type !== 'open' && o.type !== 'off').map(o => o.char);
         let ch = s.char; do { ch = (ch + 1) % Sim.CHARS.length; } while (used.includes(ch));
         s.char = ch; broadcastLobby(room); return;
       }
       case 'cfg': {
-        if (!room || room.host !== ws.id || room.g) return;
+        if (!room || !canManage(room, ws) || room.g) return;
         if ([3, 5, 7].includes(m.points)) room.points = m.points;
         if (Number.isInteger(m.map) && m.map >= -1 && m.map < Sim.MAPS.length) room.map = m.map;
         broadcastLobby(room); return;
       }
       case 'start': {
-        if (!room || room.host !== ws.id) return;
+        if (!room || !canManage(room, ws)) return;
         if (room.g && !room.g.over) return;
         room.g = null;
         for (const c of room.clients.values()) takeSlot(room, c);
@@ -178,7 +188,7 @@ wss.on('connection', (ws) => {
         return;
       }
       case 'lobby': { // host returns everyone to the lobby
-        if (!room || room.host !== ws.id) return;
+        if (!room || !canManage(room, ws)) return;
         room.g = null;
         for (const c of room.clients.values()) takeSlot(room, c);
         broadcastLobby(room); return;
@@ -243,4 +253,6 @@ server.listen(PORT, () => {
   console.log(`Boomerang Bites server on port ${PORT}`);
   console.log(`  this computer:  http://localhost:${PORT}`);
   ips.forEach(ip => console.log(`  same Wi-Fi:     http://${ip}:${PORT}`));
+  console.log(`\n  Big screen: open  http://localhost:${PORT}/?tv  on this computer to show the whole arena.`);
+  console.log(`  Phones join with the code shown there.`);
 });

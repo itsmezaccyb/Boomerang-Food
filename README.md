@@ -37,6 +37,16 @@ To keep it smooth on real internet connections:
 - Inputs go into a small jitter buffer, and slow connections skip snapshots instead of building up lag.
 - If someone disconnects mid-match, a CPU takes over their snack.
 
+### Big screen + phones (party mode)
+
+Open **`http://localhost:8080/?tv`** on the computer running the server (or tap **Play online → Big screen** on any device).
+That screen shows the **whole arena** and doesn't take a fighter. It shows a room code and a join link in big text.
+Everyone else joins from their phone, and **each phone's camera follows its own snack, zoomed in**, with edge arrows
+pointing to enemies who are off-screen. When you're knocked out, your phone zooms out to the whole arena.
+Any seated player can add CPUs and start the match from their phone, and the big screen can too.
+
+You can switch the phone camera between **Follow me** and **Whole arena** in the main menu.
+
 ### Option A: run it on your laptop (easiest)
 
 ```bash
