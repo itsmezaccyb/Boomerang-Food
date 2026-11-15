@@ -54,7 +54,7 @@ Everyone else joins from their phone, and **each phone's camera follows its own 
 pointing to enemies who are off-screen. When you're knocked out, your phone zooms out to the whole arena.
 Any seated player can add CPUs and start the match from their phone, and the big screen can too.
 
-You can switch the phone camera between **Follow me** and **Whole arena** in the main menu.
+The camera shows the **whole arena** by default; switch to **Follow me** in the main menu to zoom in on your own fighter.
 
 ### Option A: run it on your laptop (easiest)
 

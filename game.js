@@ -107,10 +107,11 @@ const Sound = {
 // ---------------------------------------------------------------- settings
 const defaultSlots = [{ type: 'human', char: 0 }, { type: 'cpu2', char: 1 }, { type: 'cpu2', char: 2 }, { type: 'cpu2', char: 3 },
   { type: 'off', char: 4 }, { type: 'off', char: 5 }, { type: 'off', char: 6 }, { type: 'off', char: 7 }];
-const settings = Object.assign({ slots: defaultSlots, points: 10, map: -1, name: '', server: '', camera: 'follow', mode: 'ffa', pw: 1, pull: true }, store('bb_settings') || {});
+const settings = Object.assign({ slots: defaultSlots, points: 10, map: -1, name: '', server: '', camera: 'whole', mode: 'ffa', pw: 1, pull: true }, store('bb_settings') || {});
 if (!Array.isArray(settings.slots)) settings.slots = defaultSlots;
 while (settings.slots.length < Sim.MAX_PLAYERS) settings.slots.push(Object.assign({}, defaultSlots[settings.slots.length])); // older saves had 4
 const saveSettings = () => store('bb_settings', settings);
+if (!settings.camV2) { settings.camera = 'whole'; settings.camV2 = true; saveSettings(); } // whole-arena view is now the default (once, for older saves)
 const POINT_OPTIONS = [5, 10, 15];
 if (!POINT_OPTIONS.includes(settings.points)) settings.points = 10; // older saves used 3/5/7
 
