@@ -18,7 +18,7 @@ We copy **mechanics** (game rules), not Boomerang Fu's name, characters, art, so
 | Parry | Slashing an incoming boomerang **parries** it. A parried telekinesis boomerang loses control and heads back. | Medium |
 | Dash | Short burst for dodging and **crossing gaps** (pits/water). | High |
 | Curving | The official store page says you can **"curve your throws around corners"**. | High (official listing) |
-| Power-ups | Come from breakable boxes. Most **last the whole game**. **Up to 3 stack**; picking up a 4th drops the oldest. **Shield** is separate (one hit). Power-ups spawn **20% less often per power-up already collected**. | High (patch notes) |
+| Power-ups | **Appear in the arena during a round** as mystery pickups (you find out what you got when you grab one). Most **last the whole game**. **Up to 3 stack**; picking up a 4th drops the oldest. **Shield** is separate (one hit). Power-ups spawn **20% less often per power-up already collected**. | High (patch notes) |
 | Arenas | 36 arenas in 7 biomes. **Foliage to hide in**, pits and water, **slippery floors**, **teleporters**, **sliding walls** that crush, **moving/tilting platforms**, rolling pins. 5% chance of rain on maps without falls. | Medium (store page, reviews, wiki) |
 | Modes | **Free-for-all** (last one standing, or most kills), **Team Up** (with friendly-fire and revive options), **Golden Boomerang** (keep-away: hold the single golden boomerang long enough to win; carrying it slows you), **Hide & Seek** (2024 update, adjustable time limit and seek attempts). | High |
 | Match options ("Modifiers") | Pull-back (recall) on/off, power-up spawn rate 0.5x / 1x / 2x, enable or disable each power-up, lives per map, match length. | High (wiki, patch notes) |
@@ -102,6 +102,9 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 - With **Teleport**: dashing while your boomerang is out teleports you to it, and you catch it.
 
 ### Power-ups
+- **Mystery pickups** (a glowing **?**) appear on open floor during each round: the first about 4–6 s after GO, then every 8–12 s, with at most 2 on the floor. They never spawn right next to anyone. Boxes don't drop power-ups.
+- You only find out what it is when you run over it: its icon pops out with its name. Online, the server doesn't even send what's inside.
+- Powers **carry over between rounds** for the whole match.
 **Stack up to 3**; picking up a 4th drops the oldest. **Shield** is separate and absorbs one hit.
 
 | Power-up | Effect |

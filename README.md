@@ -13,7 +13,7 @@ It's a web app you can **Add to Home Screen** in Safari, it works offline agains
 - **Slash**: red button. Deadly with a boomerang in hand, a shove without one, and it swats boomerangs out of the air
 - **Dash**: blue button. Dodges, and hops over hot-sauce pits
 - **Curve**: drag again (or push the right stick) right after throwing to bend it around corners
-- **Power-ups** (hold up to 3): Explosive, Fire trail, Ice trail, Triple, Telekinesis, Teleport, Drill, Speedy Feet, Shield, Disguise, Decoy, and watch out for Bamboozled
+- **Mystery power-ups** appear during each round (you find out what it is when you grab it; they carry over between rounds; hold up to 3): Explosive, Fire trail, Ice trail, Triple, Telekinesis, Teleport, Drill, Speedy Feet, Shield, Disguise, Decoy, and watch out for Bamboozled
 - **Up to 8 fighters** (players + CPUs), locally or online
 - **Arenas**: 11, including 3 big 28×18 ones for crowds, tall grass to hide in, slippery ice, and teleporter pads
 - **Modes**: Free-for-all or Teams; options for power-up frequency and call-back on/off

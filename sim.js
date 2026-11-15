@@ -59,7 +59,7 @@ const T = {
   recallMax: 720, recallAccel: 1300, teleRadius: 380, teleSpeed: 520,
   slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
   trailLife: 2.2, trailGap: 24, freeze: 1.3, explodeR: 78,
-  firstCountdown: 4, countdown: 2.6, between: 3, regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
+  firstCountdown: 4, countdown: 2.6, between: 3, firstPower: 4, powerEvery: 8, maxPickups: 2, regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
   curve: 2.6, holdToCall: 0.2, iceGrip: 2.2, bamboo: 5, disguiseAfter: 1.2, decoyLife: 5, padCd: 0.8, revealDist: 80,
 };
 // Quadrant maps (10x6), mirrored both ways into a fair 20x12 arena.
@@ -345,7 +345,7 @@ function newRound() {
     if (p.bot) Object.assign(p.bot, { think: 0.3 + Math.random() * 0.3, mode: 'idle', tap: 0, field: null, fieldKey: '', danger: null });
   });
   // first round: a proper 3-2-1 so people can turn their phones sideways; later rounds a shorter one
-  game.phase = 'intro'; game.phaseT = game.round === 1 ? T.firstCountdown : T.countdown; game.lastCount = 0; game.powerTimer = 7; game.timeScale = 1; game.slowT = 0;
+  game.phase = 'intro'; game.phaseT = game.round === 1 ? T.firstCountdown : T.countdown; game.lastCount = 0; game.powerTimer = rand(T.firstPower, T.firstPower + 2); game.timeScale = 1; game.slowT = 0;
   emit('round', { n: game.round, map: idx, grid: gridToString(game.grid), cols: COLS, rows: ROWS });
 }
 
@@ -879,13 +879,13 @@ function breakCrate(tx, ty) {
   if (game.grid[ty][tx] !== CRATE) return;
   game.grid[ty][tx] = FLOOR;
   emit('crate', { tx, ty });
-  if (Math.random() < 0.4 * powerRate()) game.pickups.push({ id: game.nextId++, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, type: randomPower(), t: 0 });
 }
 
 // Power-ups get rarer as players collect them (20% per power held), scaled by the match option.
+// Fewer appear as people collect them (20% less per power held, averaged over the players), never below 30%.
 function powerRate() {
-  const held = game.players.reduce((n, p) => n + p.powers.length, 0);
-  return game.opts.pw * Math.pow(0.8, held);
+  const held = game.players.reduce((n, p) => n + p.powers.length, 0) / Math.max(1, game.players.length / 2);
+  return game.opts.pw * Math.max(0.3, Math.pow(0.8, held));
 }
 function randomPower() {
   const anyPowers = game.players.some(p => p.powers.length);
@@ -938,12 +938,12 @@ function updatePickups(dt) {
   if (game.opts.pw <= 0) return;
   game.powerTimer -= dt;
   if (game.powerTimer > 0) return;
-  game.powerTimer = rand(7, 11) / powerRate();
-  if (game.pickups.length >= 2) return;
+  game.powerTimer = rand(T.powerEvery, T.powerEvery + 4) / powerRate();
+  if (game.pickups.length >= T.maxPickups) return;
   for (let tries = 0; tries < 40; tries++) {
     const tx = 1 + Math.floor(Math.random() * (COLS - 2)), ty = 1 + Math.floor(Math.random() * (ROWS - 2));
     const cx = tx * TILE + TILE / 2, cy = ty * TILE + TILE / 2;
-    if (game.grid[ty][tx] !== FLOOR || !openTile(tx, ty) || game.players.some(p => p.alive && dist2(p.x, p.y, cx, cy) < 90 * 90)) continue;
+    if (game.grid[ty][tx] !== FLOOR || !openTile(tx, ty) || game.players.some(p => p.alive && dist2(p.x, p.y, cx, cy) < 130 * 130)) continue;
     game.pickups.push({ id: game.nextId++, x: cx, y: cy, type: randomPower(), t: 0 });
     emit('ring', { x: cx, y: cy });
     break;
@@ -1163,7 +1163,7 @@ function encodeSnapshot(g) {
   ]);
   const R = g.rangs.map(r => [r.id, R0(r.x), R0(r.y), r.owner.i,
     RSTATE.indexOf(r.state) | (r.fire ? 8 : 0) | (r.drill ? 16 : 0) | (r.ice ? 32 : 0) | (r.boom ? 64 : 0) | (r.neutral ? 128 : 0)]);
-  const K = g.pickups.map(k => [k.id, k.x, k.y, POWER_KEYS.indexOf(k.type)]);
+  const K = g.pickups.map(k => [k.id, k.x, k.y]); // what's inside stays secret until someone grabs it
   const L = g.trails.map(t => [t.id, R0(t.x), R0(t.y), t.k === 'fire' ? 0 : 1, R0(t.t * 10)]);
   const D = g.decoys.map(d => [d.id, R0(d.x), R0(d.y), d.owner.i, R0(d.face * 100)]);
   return { P, R, K, L, D, ph: g.phase };

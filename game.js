@@ -256,7 +256,7 @@ function handleEvent(type, d) {
       for (let i = 0; i < 10; i++) vfx.parts.push({ x: cx, y: cy, vx: rand(-160, 160), vy: rand(-160, 160), life: 0.5, max: 0.5, col: ['#c1915a', '#e2b77f', '#8a5a2b'][i % 3], r: rand(3, 7), sq: true });
       break;
     }
-    case 'pickup': Sound.pickup(); vfx.fx.push({ type: 'text', x: d.x, y: d.y - 30, text: POWERS[d.k].name, col: '#fff', t: 0, max: 1 }); break;
+    case 'pickup': Sound.pickup(); vfx.fx.push({ type: 'text', x: d.x, y: d.y - 30, text: POWERS[d.k].name, col: d.k === 'bamboo' ? '#ff9b9b' : '#fff', t: 0, max: 1.2 }, { type: 'reveal', k: d.k, x: d.x, y: d.y, t: 0, max: 0.8 }); break;
     case 'shield': Sound.shield(); vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.4, col: '#7fd3ff' }); break;
     case 'kill': {
       const q = P(d.i); Sound.hit(); vfx.shake = Math.max(vfx.shake, d.f ? 4 : 9);
@@ -553,7 +553,7 @@ const net = {
         state: Sim.RSTATE[r[4] & 7], fire: !!(r[4] & 8), drill: !!(r[4] & 16), ice: !!(r[4] & 32), boom: !!(r[4] & 64), neutral: !!(r[4] & 128) };
     });
     game.trails = (b.L || []).map(l => ({ id: l[0], x: l[1], y: l[2], k: l[3] ? 'ice' : 'fire', t: l[4] / 10 }));
-    game.pickups = b.K.map(k => ({ id: k[0], x: k[1], y: k[2], type: POWER_KEYS[k[3]] }));
+    game.pickups = b.K.map(k => ({ id: k[0], x: k[1], y: k[2] }));
     const dA = new Map((a.D || []).map(x => [x[0], x]));
     game.decoys = (b.D || []).map(x => { const y = dA.get(x[0]) || x; return { id: x[0], x: lerp(y[1], x[1], t), y: lerp(y[2], x[2], t), owner: game.players.find(p => p.i === x[3]) || game.players[0], face: x[4] / 100, vx: x[1] - y[1], vy: x[2] - y[2] }; });
   },
@@ -714,8 +714,15 @@ function render(T) {
   for (const k of game.pickups) {
     const kt = vfx.pick.get(k.id) || 0, bob = Math.sin(kt * 4) * 3, sc = Math.min(1, kt * 5);
     ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(k.x, k.y + 14, 12, 4, 0, 0, 7); ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.beginPath(); ctx.arc(k.x, k.y - 4 + bob, 17 * sc, 0, 7); ctx.fill();
-    drawSpr(ctx, POWERS[k.type].sprite, k.x, k.y - 4 + bob, 26 * sc);
+    // mystery power-up: a glowing "?" bubble — you only find out what it is when you grab it
+    const cy = k.y - 4 + bob, glow = 0.5 + Math.sin(kt * 5) * 0.2;
+    ctx.fillStyle = `rgba(255,214,90,${glow * 0.35})`; ctx.beginPath(); ctx.arc(k.x, cy, 24 * sc, 0, 7); ctx.fill();
+    const grd = ctx.createRadialGradient(k.x - 5, cy - 6, 2, k.x, cy, 16 * sc);
+    grd.addColorStop(0, '#fff6c9'); grd.addColorStop(1, '#ffb627');
+    ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(k.x, cy, 15 * sc, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#7a3d00'; ctx.font = `900 ${Math.round(19 * sc)}px ui-rounded, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('?', k.x, cy + 1); ctx.textBaseline = 'alphabetic';
   }
   for (const r of game.rangs) if (r.state === 'dropped') { // lying on the floor: owner's colour ring so you can find yours
     const v = vfx.rang.get(r.id);
@@ -773,6 +780,8 @@ function render(T) {
       for (let i = 0; i < 6; i++) { const a = i * 1.047; ctx.beginPath(); ctx.moveTo(f.x + Math.cos(a) * 6, f.y + Math.sin(a) * 6); ctx.lineTo(f.x + Math.cos(a) * (8 + k * 18), f.y + Math.sin(a) * (8 + k * 18)); ctx.stroke(); }
     } else if (f.type === 'ring') {
       ctx.globalAlpha = 1 - k; ctx.strokeStyle = f.col; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(f.x, f.y, 10 + k * 34, 0, 7); ctx.stroke();
+    } else if (f.type === 'reveal') { // the power's icon pops out of the mystery bubble
+      drawSpr(ctx, POWERS[f.k].sprite, f.x, f.y - 20 - k * 30, 26 + k * 8, 0, 1 - k * k);
     } else if (f.type === 'ghostup') {
       drawSpr(ctx, 'skull', f.x, f.y - k * 40, 26, Math.sin(k * 12) * 0.2, 1 - k);
     } else if (f.type === 'text') {
