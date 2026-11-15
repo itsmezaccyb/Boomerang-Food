@@ -7,7 +7,7 @@ It's a web app you can **Add to Home Screen** in Safari, it works offline agains
 
 - **Move**: drag on the left half of the screen
 - **Throw**: hold on the right half, drag to aim, let go (hold longer for more range; a target ring shows where it turns around)
-- **Get it back**: it bounces off walls on the way out and flies back to you, but a wall in the way stops it and it drops there. Walk over it, or **hold throw to call it back**: it's pulled to you like gravity, around walls and corners (it hits anyone in the way)
+- **Get it back**: it bounces off walls on the way out and flies back to you, but a wall in the way stops it and it drops there. Walk over it, or **hold throw to call it back**: it's pulled straight at you like gravity and slides along walls, but can get stuck in an inside corner (it hits anyone in the way)
 - **Two hands**: carry up to two boomerangs. A knocked-out snack's boomerangs turn **grey** and anyone can grab them
 - **Scoring**: every knockout is a point (self-knockouts cost one); first to 5 / 10 / 15 wins
 - **Slash**: red button. Deadly with a boomerang in hand, a shove without one, and it swats boomerangs out of the air

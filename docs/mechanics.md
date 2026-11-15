@@ -70,7 +70,7 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 2. **Walls, trees, boxes and custom shapes on the way out**: it **bounces off** at the proper angle, keeping 85% of its speed (boxes break). After 8 bounces (stuck rattling in a corner) it drops.
 3. **Return**: once out of range it flies straight back toward you. **Anything solid in the way stops it**: it gets stuck on the far side and drops there.
 4. **Pick up**: walk over a boomerang on the floor to grab it.
-5. **Call back**: with **both hands empty**, hold throw for a moment (0.2 s). It works **like gravity**: the boomerang is pulled toward you, **finds its way around walls and corners** and slides along surfaces, speeding up as it comes. It can't pass a wall that completely separates you. Let go early and it carries on as a normal return, which a wall can stop.
+5. **Call back**: with **both hands empty**, hold throw for a moment (0.2 s). It works **like gravity**: the boomerang is always **pulled straight at you**, speeding up as it comes. If something's in the way, it **slides along the surface**: a wall angled toward you lets it slip past, but pressed into an inside corner (say an L-shaped wall with you on the far side) it **stays stuck** until you move to a better angle or go and get it. Let go early and it carries on as a normal return, which a wall can stop. CPUs check whether a pull would actually reach them before trying, and walk over otherwise.
 6. It hits players **on the way out, on the way back, and when called back**. Your own boomerang never hurts you.
 
 ### Two hands, grey boomerangs

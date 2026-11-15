@@ -676,43 +676,6 @@ function flyStep(r, dt) {
   return true;
 }
 
-// Flow field toward a tile for flying boomerangs (they fly over pits, not through walls or shapes).
-function rangField(gx, gy) {
-  const key = gx + ',' + gy;
-  game.flow = game.flow && game.flow.round === game.round && game.flow.gen === game.gridGen ? game.flow : { round: game.round, gen: game.gridGen, m: new Map() };
-  if (game.flow.m.has(key)) return game.flow.m.get(key);
-  const f = new Int16Array(COLS * ROWS).fill(-1), q = [];
-  const ok = (x, y) => x >= 0 && y >= 0 && x < COLS && y < ROWS && !solidT(game.grid[y][x]) && !(game.nav && game.nav.b[x + y * COLS]);
-  if (ok(gx, gy)) { f[gx + gy * COLS] = 0; q.push(gx + gy * COLS); }
-  for (let h = 0; h < q.length; h++) {
-    const c = q[h], cx = c % COLS, cy = (c / COLS) | 0;
-    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const nx = cx + dx, ny = cy + dy, n = nx + ny * COLS;
-      if (!ok(nx, ny) || f[n] >= 0 || !stepOk(cx, cy, nx, ny)) continue;
-      f[n] = f[c] + 1; q.push(n);
-    }
-  }
-  if (game.flow.m.size > 64) game.flow.m.clear();
-  game.flow.m.set(key, f);
-  return f;
-}
-// Next point to head for when the owner isn't in sight: the neighbouring tile that's closest (by flow) to them.
-function flowWaypoint(r, o) {
-  const f = rangField(Math.floor(o.x / TILE), Math.floor(o.y / TILE));
-  const cx = Math.floor(r.x / TILE), cy = Math.floor(r.y / TILE);
-  const here = cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS ? f[cx + cy * COLS] : -1;
-  let best = null, bv = here >= 0 ? here : 9999;
-  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
-    const nx = cx + dx, ny = cy + dy;
-    if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
-    const v = f[nx + ny * COLS];
-    if (v < 0 || v >= bv) continue;
-    if (dx && dy && (f[nx + cy * COLS] < 0 || f[cx + ny * COLS] < 0 || !stepOk(cx, cy, nx, ny))) continue; // don't cut corners
-    if (!dx || !dy) { if (!stepOk(cx, cy, nx, ny)) continue; }
-    bv = v; best = { x: nx * TILE + TILE / 2, y: ny * TILE + TILE / 2 };
-  }
-  return best;
-}
 // Move a boomerang, sliding along walls and shapes instead of stopping dead.
 function slideStep(r, dt) {
   const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt;
@@ -725,8 +688,26 @@ function slideStep(r, dt) {
     if (!solidAt(sx, sy)) { r.x = sx; r.y = sy; }
     return;
   }
-  if (!solidAt(nx, r.y)) { r.x = nx; r.vy *= 0.5; }      // slide along a horizontal edge
-  else if (!solidAt(r.x, ny)) { r.y = ny; r.vx *= 0.5; } // slide along a vertical edge
+  // tile edge: keep only the part of the pull that runs along the wall (zero if pulled straight in -> stuck)
+  if (!solidAt(nx, r.y)) r.x = nx;
+  else if (!solidAt(r.x, ny)) r.y = ny;
+}
+
+// Would a call-back reach the owner from here? (Quick simulation of the pull, for CPUs: a real player can see it.)
+function recallWouldReach(r, o) {
+  const t = { x: r.x, y: r.y, vx: 0, vy: 0 };
+  let speed = 150, stuck = 0;
+  for (let i = 0; i < 100; i++) {
+    const dx = o.x - t.x, dy = o.y - t.y, d = Math.hypot(dx, dy) || 1;
+    if (d < PLAYER_R + 14) return true;
+    speed = Math.min(speed + T.recallAccel / 60, T.recallMax);
+    t.vx = dx / d * speed; t.vy = dy / d * speed;
+    const ox = t.x, oy = t.y;
+    slideStep(t, 1 / 60);
+    stuck = Math.hypot(t.x - ox, t.y - oy) < 1.5 ? stuck + 1 : 0;
+    if (stuck > 6) return false;
+  }
+  return false;
 }
 
 function updateRang(r, dt) {
@@ -789,16 +770,13 @@ function updateRang(r, dt) {
     if (r.drill && tileAt(nx, ny) === CRATE) breakCrate(Math.floor(nx / TILE), Math.floor(ny / TILE));
     r.x = nx; r.y = ny;
   } else if (r.state === 'recall') {
-    // Call-back works like gravity: it's pulled toward you and finds its way around walls and corners,
-    // sliding along surfaces. Deadly on the way.
+    // Call-back works like gravity: it's always pulled straight at you. If something's in the way it slides along
+    // the surface, so a wall angled toward you lets it slip past, but pressed into an inside corner it stays stuck
+    // until you move to a better angle. Deadly on the way.
     const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
     r.speed = Math.min(r.speed + T.recallAccel * dt, T.recallMax);
     if (d <= r.speed * dt + PLAYER_R + 10) { catchRang(o, r); return; }
-    let tx = o.x, ty = o.y;
-    if (!r.drill && !lineClear(r.x, r.y, o.x, o.y)) { const w = flowWaypoint(r, o); if (w) { tx = w.x; ty = w.y; } }
-    const wx = tx - r.x, wy = ty - r.y, wd = Math.hypot(wx, wy) || 1;
-    const k = Math.min(1, dt * 9); // smooth pull, so it swings round corners instead of snapping
-    r.vx = lerp(r.vx, wx / wd * r.speed, k); r.vy = lerp(r.vy, wy / wd * r.speed, k);
+    r.vx = dx / d * r.speed; r.vy = dy / d * r.speed;
     if (r.drill) { r.x = clamp(r.x + r.vx * dt, 4, WW - 4); r.y = clamp(r.y + r.vy * dt, 4, WH - 4); if (tileAt(r.x, r.y) === CRATE) breakCrate(Math.floor(r.x / TILE), Math.floor(r.y / TILE)); }
     else slideStep(r, dt);
   } else if (r.state === 'tele') {
@@ -899,7 +877,7 @@ function explode(r, x, y) {
 
 function breakCrate(tx, ty) {
   if (game.grid[ty][tx] !== CRATE) return;
-  game.grid[ty][tx] = FLOOR; game.gridGen = (game.gridGen || 0) + 1;
+  game.grid[ty][tx] = FLOOR;
   emit('crate', { tx, ty });
   if (Math.random() < 0.4 * powerRate()) game.pickups.push({ id: game.nextId++, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, type: randomPower(), t: 0 });
 }
@@ -1076,12 +1054,13 @@ function updateBot(p, dt) {
       else
       if (mine && mine.state === 'dropped') {
         const d = Math.hypot(mine.x - p.x, mine.y - p.y);
-        if (game.opts.pull && d > 120 && !b.walkToRang) inp.throw = true; // summon it
+        if (b.think <= 0 || b.canPull === undefined) b.canPull = recallWouldReach(mine, p);
+        if (game.opts.pull && d > 120 && !b.walkToRang && b.canPull) inp.throw = true; // summon it if the pull would get here
         else goal = mine;
       } else if (mine && mine.state === 'recall') inp.throw = true;
       b.recallT = mine && mine.state === 'recall' ? (b.recallT || 0) + dt : 0;
       if (b.recallT > 3) b.walkToRang = true; // call-back isn't getting there: go and fetch it
-      if (!mine || p.hasRang) b.walkToRang = false;
+      if (!mine || p.hasRang) { b.walkToRang = false; b.canPull = undefined; }
       else if (mine && has(p, 'tele') && mine.state !== 'dropped' && td < T.teleRadius + 40 && (b.steerT || 0) < 3 && lineClear(mine.x, mine.y, tgt.x, tgt.y)) { // steer it at the target
         inp.throw = true; inp.ax = tgt.x - mine.x; inp.ay = tgt.y - mine.y; b.steerT = (b.steerT || 0) + dt;
       }

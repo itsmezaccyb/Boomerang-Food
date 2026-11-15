@@ -130,12 +130,18 @@ g = Sim.create(); Sim.newMatch(g, [0, 1].map(i => ({ i, type: 'local', char: i }
 let counts = []; for (let t = 0; t < 4.5; t += 1 / 120) { Sim.step(g, 1 / 120); for (const [k, d] of g.events) if (k === 'count' || k === 'go') counts.push(k === 'go' ? 'GO' : d); g.events = []; }
 ok(counts.join() === '3,2,1,GO', 'first round has a 3-2-1-GO countdown (' + counts.join() + ')');
 
-// --- gravity call-back around a wall
-g = setup(); [a, b] = g.players; b.x = 900; b.y = 560;
-for (let y = 0; y < 9; y++) g.grid[y][10] = 1; // wall from the top, gap at the bottom
-a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 700, y: 120 }); a.x = 300; a.y = 120;
+// --- gravity call-back: pulled straight at you, slides along walls, can get stuck in an inside corner
+const lArena = () => { const G = setup(); for (let y = 1; y < G.rows - 1; y++) for (let x = 1; x < G.cols - 1; x++) G.grid[y][x] = 0;
+  for (let y = 3; y <= 7; y++) G.grid[y][10] = 1; for (let x = 10; x <= 14; x++) G.grid[7][x] = 1; return G; }; // an L: wall down, then along
+g = lArena(); [a, b] = g.players; b.x = 900; b.y = 60;
+a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 11 * 48 + 12, y: 7 * 48 - 10 }); a.x = 7 * 48; a.y = 10 * 48; // boomerang in the inside corner, you beyond the corner
+run(g, 2.5, () => { a.input = I({ throw: true }); });
+r = own(g, a)[0]; ok(a.ammo === 0 && r && r.x > 10 * 48 && r.y < 7 * 48, 'pulled into an inside corner from the far side: it stays stuck');
+a.x = 17 * 48; a.y = 3 * 48; run(g, 2, () => { a.input = I({ throw: true }); }); ok(a.ammo === 1, '...move to a better angle and it comes to you');
+g = lArena(); [a, b] = g.players; b.x = 60; b.y = 60;
+a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 12 * 48, y: 5 * 48 }); a.x = 15.5 * 48; a.y = 10 * 48; // pull angles along the bottom wall
 run(g, 3, () => { a.input = I({ throw: true }); });
-ok(a.ammo === 1, 'call-back finds its way around a wall (like gravity)');
+ok(a.ammo === 1, 'when the wall angles toward you it slides along and gets free');
 
 console.log(`\n${pass} passed, ${failN} failed`);
 process.exit(failN ? 1 : 0);
