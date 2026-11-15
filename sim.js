@@ -57,7 +57,7 @@ const T = {
   minRange: 170, maxRange: 510, minSpeed: 560, maxSpeed: 780, fullCharge: 0.6,
   returnSpeed: 620,
   recallMax: 720, recallAccel: 1300, teleRadius: 380, teleSpeed: 520,
-  slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
+  recallReach: 5, slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
   trailLife: 2.2, trailGap: 24, freeze: 1.3, explodeR: 78,
   firstCountdown: 4, countdown: 2.6, between: 3, firstPower: 4, powerEvery: 8, maxPickups: 2, regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
   curve: 2.6, holdToCall: 0.2, iceGrip: 2.2, bamboo: 5, disguiseAfter: 1.2, decoyLife: 5, padCd: 0.8, revealDist: 80,
@@ -712,6 +712,7 @@ function recallWouldReach(r, o) {
 
 function updateRang(r, dt) {
   r.t += dt; r.stateT += dt;
+  const px = r.x, py = r.y; // where it was at the start of this step (hits are checked along the whole path)
   if (r.immuneT > 0) { r.immuneT -= dt; if (r.immuneT <= 0) r.immune = null; }
   const o = r.owner, ownerOk = o.alive && !o.falling && !r.neutral;
 
@@ -803,9 +804,13 @@ function updateRang(r, dt) {
     }
   }
   // Hits — on the way out, on the way back, and while being summoned. Never the owner.
+  // Checked along the line it just travelled (so a fast boomerang can't skip past someone), and a summoned one
+  // has a slightly bigger reach so "it hits anyone in its path" is dependable.
+  const reach = PLAYER_R + T.rangR + (r.state === 'recall' ? T.recallReach : 0);
   for (const q of game.players) {
     if (q === o || q === r.immune || !q.alive || q.falling || sameTeam(o, q)) continue;
-    if (dist2(q.x, q.y, r.x, r.y) < (PLAYER_R + T.rangR) ** 2) {
+    const c = segClosest(q.x, q.y, px, py, r.x, r.y);
+    if (dist2(q.x, q.y, c[0], c[1]) < reach * reach) {
       if (r.boom) { explode(r, r.x, r.y); return; }
       kill(q, o, false, r);
     }

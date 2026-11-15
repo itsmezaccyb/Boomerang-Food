@@ -143,5 +143,12 @@ a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 12 * 48, y: 5 * 48 }); a.x 
 run(g, 3, () => { a.input = I({ throw: true }); });
 ok(a.ammo === 1, 'when the wall angles toward you it slides along and gets free');
 
+// --- summoned boomerang can't skip past someone, even on a big (laggy) step
+g = setup(); [a, b] = g.players; for (let y = 1; y < g.rows - 1; y++) for (let x = 1; x < g.cols - 1; x++) g.grid[y][x] = 0;
+a.ammo = 0; a.hasRang = false; a.x = 100; a.y = 300; b.x = 400; b.y = 300 + 22; // just off the straight line
+put(g, { owner: a, x: 860, y: 300, state: 'recall', speed: 720 });
+for (let k = 0; k < 20 && b.alive && a.ammo === 0; k++) { a.input = I({ throw: true }); b.input = I({}); Sim.step(g, 1 / 20); }
+ok(!b.alive, 'summoned boomerang hits someone in its path even with big laggy steps');
+
 console.log(`\n${pass} passed, ${failN} failed`);
 process.exit(failN ? 1 : 0);
