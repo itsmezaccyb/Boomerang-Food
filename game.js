@@ -135,13 +135,35 @@ function keyInput(set) {
   return { mx: (any(k.r) ? 1 : 0) - (any(k.l) ? 1 : 0), my: (any(k.d) ? 1 : 0) - (any(k.u) ? 1 : 0), ax: 0, ay: 0, throw: any(k.t), dash: any(k.h), slash: any(k.s) };
 }
 function getPads() { return navigator.getGamepads ? Array.from(navigator.getGamepads() || []).filter(Boolean) : []; }
+// Round ("radial") dead zone, rescaled so the stick goes smoothly from 0 at the edge of the dead zone to 1.
+// (A per-axis dead zone snaps aim to 0°/90° whenever one axis is small — that was the jumpy feel.)
+function radialStick(x, y, dead) {
+  const m = Math.hypot(x, y);
+  if (m < dead) return { x: 0, y: 0, m: 0 };
+  const mag = Math.min(1, (m - dead) / (1 - dead));
+  return { x: x / m * mag, y: y / m * mag, m: mag };
+}
+// Aim filter: only follows the stick while it's pushed well out (so the spring-back when you let go can't
+// flip your aim), and smooths tiny jitter over ~35 ms. Returns a direction while held, or 0,0 when released.
+const aimFilters = {};
+function filterAim(key, x, y, m, holdAt, followAt) {
+  const f = aimFilters[key] || (aimFilters[key] = { a: null, t: performance.now() });
+  const now = performance.now(), dt = Math.min(0.1, (now - f.t) / 1000); f.t = now;
+  if (m < holdAt) { f.a = null; return [0, 0]; }                 // released / resting near centre
+  const target = Math.atan2(y, x);
+  if (f.a === null) f.a = target;                                  // fresh push: snap straight to it
+  else if (m >= followAt) f.a += angDiff(target, f.a) * (1 - Math.exp(-dt / 0.035)); // follow smoothly
+  return [Math.cos(f.a), Math.sin(f.a)];
+}
 function padInput(i) {
   const p = getPads()[i]; if (!p) return ZERO;
-  const dz = (v) => (Math.abs(v) < 0.2 ? 0 : v);
   const b = (n) => !!(p.buttons[n] && (p.buttons[n].pressed || p.buttons[n].value > 0.4));
-  let mx = dz(p.axes[0] || 0), my = dz(p.axes[1] || 0);
+  const mv = radialStick(p.axes[0] || 0, p.axes[1] || 0, 0.15);
+  let mx = mv.x, my = mv.y;
   if (b(14)) mx = -1; if (b(15)) mx = 1; if (b(12)) my = -1; if (b(13)) my = 1;
-  return { mx, my, ax: dz(p.axes[2] || 0), ay: dz(p.axes[3] || 0), throw: b(0) || b(7), dash: b(1) || b(6) || b(4), slash: b(2) || b(5) || b(3) };
+  const as = radialStick(p.axes[2] || 0, p.axes[3] || 0, 0.22);
+  const [ax, ay] = filterAim('pad' + i, as.x, as.y, as.m, 0.3, 0.5);
+  return { mx, my, ax, ay, throw: b(0) || b(7), dash: b(1) || b(6) || b(4), slash: b(2) || b(5) || b(3) };
 }
 
 // Touch: left side = floating joystick; right side = throw/aim stick; small dash button.
@@ -192,8 +214,9 @@ function touchInput() {
   if (touch.aim) {
     r.throw = true;
     const dx = touch.aim.x - touch.aim.ox, dy = touch.aim.y - touch.aim.oy, d = Math.hypot(dx, dy);
-    if (d > 18) { r.ax = dx / d; r.ay = dy / d; }
-  }
+    const m = Math.min(1, Math.max(0, (d - 14) / 40)); // ~14px dead zone, full at ~54px
+    [r.ax, r.ay] = filterAim('touch', dx, dy, m, 0.12, 0.12);
+  } else filterAim('touch', 0, 0, 0, 1, 1);
   return r;
 }
 const mergeInput = (a, b) => ({ mx: clamp(a.mx + b.mx, -1, 1), my: clamp(a.my + b.my, -1, 1), ax: a.ax || b.ax, ay: a.ay || b.ay, throw: a.throw || b.throw, dash: a.dash || b.dash, slash: a.slash || b.slash });
