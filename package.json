@@ -5,7 +5,8 @@
   "description": "Snack-sized boomerang brawler: home-screen web app + authoritative multiplayer server",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/mechanics.test.js && node tests/fuzz.js 30"
   },
   "engines": { "node": ">=18" },
   "dependencies": {

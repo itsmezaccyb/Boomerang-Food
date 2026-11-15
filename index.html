@@ -34,7 +34,7 @@
       </div>
       <div class="panel">
         <h2>Match</h2>
-        <div class="row"><span>Points to win</span><div class="seg" id="seg-points"></div></div>
+        <div class="row"><span>Kills to win</span><div class="seg" id="seg-points"></div></div>
         <div class="row"><span>Arena</span><button class="pill" id="btn-map"></button></div>
         <div class="row"><span>Mode</span><button class="pill" id="btn-mode"></button></div>
         <div class="row"><span>Power-ups</span><button class="pill" id="btn-pw"></button></div>
@@ -82,7 +82,7 @@
       </div>
       <div class="panel">
         <h2>Match</h2>
-        <div class="row"><span>Points to win</span><div class="seg" id="lobby-points"></div></div>
+        <div class="row"><span>Kills to win</span><div class="seg" id="lobby-points"></div></div>
         <div class="row"><span>Arena</span><button class="pill" id="lobby-map"></button></div>
         <div class="row"><span>Mode</span><button class="pill" id="lobby-mode"></button></div>
         <div class="row"><span>Power-ups</span><button class="pill" id="lobby-pw"></button></div>
@@ -102,12 +102,13 @@
     <ul>
       <li><b>Move</b> — drag anywhere on the left side of the screen.</li>
       <li><b>Throw</b> — hold on the right side, drag to aim, let go. Hold longer to throw farther; the target ring shows where it'll turn around. Letting go of the drag keeps your aim.</li>
-      <li><b>Catch it</b> — it bounces off walls and flies back, but it can get stuck and drop to the floor. Walk over it, or <b>hold the right side to call it back</b>. A called-back boomerang hits anyone in its way!</li>
-      <li><b>Slash</b> — the red button. Deadly with your boomerang in hand; without it, it's a shove (great for pushing people into hot sauce). It also knocks incoming boomerangs back, even into their thrower.</li>
+      <li><b>Catch it</b> — it flies back to you straight through walls. If it hits a wall on the way out it sticks there: walk over it, or <b>hold the right side to call it back</b>. It hits anyone in its way!</li><li><b>Two hands</b> — you can carry two boomerangs. When a snack is knocked out their boomerangs turn <b>grey</b>: anyone can grab them.</li>
+      <li><b>Slash</b> — the red button. Deadly with a boomerang in hand; without one it's a shove (push people into hot sauce — that counts as your knockout). It also swats incoming boomerangs to the floor.</li>
       <li><b>Dash</b> — the blue button. Dodge, or hop over hot-sauce pits.</li>
-      <li>One hit and you're out. Last snack standing scores a point.</li>
+      <li>One hit and you're out for the round. Every knockout is a point (knocking yourself out costs one). First to the target wins.</li>
       <li>Break boxes for power-ups (you can hold 3):
-        <span class="pw"><img src="sprites/boom.svg">Explosive</span>
+        <span class="pw"><img src="sprites/boom.svg">Explosive (used up — a new one appears)</span>
+        <span class="pw"><img src="sprites/boomerang.svg">Extra boomerang</span>
         <span class="pw"><img src="sprites/fire.svg">Fire trail</span>
         <span class="pw"><img src="sprites/ice.svg">Ice trail (freezes)</span>
         <span class="pw"><img src="sprites/multi.svg">Triple</span>

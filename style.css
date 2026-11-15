@@ -148,3 +148,5 @@ body.tv .join-info { font-size: 18px; }
   #slots, #lobby-slots { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
   #slots .slot, #lobby-slots .slot { border-bottom: 1px solid var(--line); }
 }
+
+.stand .kd { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 6px; }

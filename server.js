@@ -143,7 +143,7 @@ wss.on('connection', (ws) => {
       case 'ping': return send(ws, { t: 'pong', ts: m.ts });
       case 'host': {
         leaveRoom(ws); ws.name = cleanName(m.name);
-        const r = { code: makeCode(), clients: new Map(), host: ws.id, points: 5, map: -1, mode: 'ffa', pw: 1, pull: true, g: null, tick: 0, events: [],
+        const r = { code: makeCode(), clients: new Map(), host: ws.id, points: 10, map: -1, mode: 'ffa', pw: 1, pull: true, g: null, tick: 0, events: [],
           slots: Array.from({ length: Sim.MAX_PLAYERS }, (_, i) => ({ type: i < 4 ? 'open' : 'off' })), tvHost: !!m.tv };
         rooms.set(r.code, r); joinRoom(ws, r, !!m.tv);
         return;
@@ -176,7 +176,7 @@ wss.on('connection', (ws) => {
       }
       case 'cfg': {
         if (!room || !canManage(room, ws) || room.g) return;
-        if ([3, 5, 7].includes(m.points)) room.points = m.points;
+        if ([5, 10, 15].includes(m.points)) room.points = m.points;
         if (Number.isInteger(m.map) && m.map >= -1 && m.map < Sim.MAPS.length) room.map = m.map;
         if (m.mode === 'ffa' || m.mode === 'teams') room.mode = m.mode;
         if ([0, 0.5, 1, 2].includes(m.pw)) room.pw = m.pw;

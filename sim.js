@@ -41,9 +41,11 @@ const POWERS = {
   disguise: { sprite: 'mask',     name: 'Disguise!' },
   decoy:    { sprite: 'decoy',    name: 'Decoy!' },
   bamboo:   { sprite: 'dizzy',    name: 'Bamboozled!' }, // bad pickup: flips your controls for a few seconds
+  extra:    { sprite: 'boomerang', name: 'Extra Boomerang!' }, // carry two
 };
 const POWER_KEYS = Object.keys(POWERS);
 const MAX_POWERS = 3;
+const MAX_AMMO = 2; // boomerangs you can carry (one per hand)
 const BOT_DIFF = {
   cpu1: { react: 0.5, err: 0.32, dodge: 0.25, aggro: 0.5 },
   cpu2: { react: 0.28, err: 0.16, dodge: 0.6, aggro: 0.8 },
@@ -53,10 +55,11 @@ const BOT_DIFF = {
 const T = {
   run: 200, chargeSlow: 0.55, dashSpeed: 640, dashTime: 0.17, dashCd: 0.8,
   minRange: 170, maxRange: 510, minSpeed: 560, maxSpeed: 780, fullCharge: 0.6,
-  returnSpeed: 620, maxBounces: 3, minSpeed2: 150, maxFlight: 4, maxReturn: 2.6,
+  returnSpeed: 620,
   recallMax: 720, recallAccel: 1300, teleRadius: 380, teleSpeed: 520,
   slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
   trailLife: 2.2, trailGap: 24, freeze: 1.3, explodeR: 78,
+  regen: 1.4, creditTime: 3,
   curve: 2.6, holdToCall: 0.2, iceGrip: 2.2, bamboo: 5, disguiseAfter: 1.2, decoyLife: 5, padCd: 0.8, revealDist: 80,
 };
 // Quadrant maps (10x6), mirrored both ways into a fair 20x12 arena.
@@ -187,12 +190,12 @@ function makeBot(type) {
 // opts: { mode: 'ffa' | 'teams', pull: call-back on/off, pw: power-up frequency 0 | 0.5 | 1 | 2 }
 function newMatch(g, specs, points, mapSetting, opts) {
   use(g);
-  g.points = points; g.mapSetting = mapSetting; g.over = false;
+  g.points = points; g.mapSetting = mapSetting; g.over = false; g.winner = null;
   g.opts = Object.assign({ mode: 'ffa', pull: true, pw: 1 }, opts || {});
   if (g.opts.mode === 'teams' && new Set(specs.map(sp => sp.i % 2)).size < 2) g.opts.mode = 'ffa'; // need two teams
   g.players = specs.map(s => ({
     i: s.i, type: s.type, char: CHARS[s.char], charIndex: s.char, color: PCOLORS[s.i], score: 0,
-    bot: s.type.startsWith('cpu') ? makeBot(s.type) : null, input: NO_INPUT, powers: [], shield: false,
+    bot: s.type.startsWith('cpu') ? makeBot(s.type) : null, input: NO_INPUT, powers: [], shield: false, kills: 0, deaths: 0,
   }));
   g.round = 0;
   newRound();
@@ -217,8 +220,9 @@ function newRound() {
       alive: true, hasRang: true, charging: false, charge: 0, slashT: 0, slashCd: 0, slashArmed: true,
       dashT: 0, dashCd: 0, dashDir: 0, falling: 0, walkT: 0, prevThrow: false, prevDash: false, prevSlash: false,
       inv: 0, frozen: 0, recalling: false, steering: false, holdT: 0, bamboo: 0, hidden: false, disguised: false, stillT: 0,
-      decoyUsed: false, onPad: false, padCd: 0, team: teamOf(p),
+      decoyUsed: false, onPad: false, padCd: 0, team: teamOf(p), regenT: 0, lastHitBy: null, lastHitT: -9,
     });
+    setAmmo(p, has(p, 'extra') ? 2 : 1);
     p.aim = p.face;
     if (p.bot) Object.assign(p.bot, { think: 0.3 + Math.random() * 0.3, mode: 'idle', tap: 0, field: null, fieldKey: '', danger: null });
   });
@@ -262,17 +266,17 @@ function step(g, dt) {
   }
 }
 
+// Scoring is by kills (see kill()). A round ends when one snack/team is left; the match ends when someone hits the target.
 function endRound() {
+  const scores = game.players.map(p => p.score);
+  if (game.winner) {
+    const w = game.winner, team = game.opts.mode === 'teams';
+    game.over = true; game.phase = 'over';
+    emit('result', { w: w.i, scores, team: team ? teamOf(w) : -1, kills: game.players.map(p => p.kills), deaths: game.players.map(p => p.deaths) });
+    return;
+  }
   const alive = game.players.filter(p => p.alive);
-  const scores = () => game.players.map(p => p.score);
-  if (alive.length && new Set(alive.map(teamOf)).size === 1) {
-    const w = alive[0], team = game.opts.mode === 'teams';
-    // in teams, every member of the surviving team scores (dead teammates included)
-    for (const p of game.players) if (team ? teamOf(p) === teamOf(w) : p === w) p.score++;
-    const ev = { w: w.i, scores: scores(), team: team ? teamOf(w) : -1 };
-    if (w.score >= game.points) { game.over = true; game.phase = 'over'; emit('result', ev); return; }
-    emit('score', ev);
-  } else emit('draw', { scores: scores() });
+  emit('roundend', { scores, last: alive.length === 1 ? alive[0].i : -1 });
   game.phase = 'between'; game.phaseT = 1.2;
 }
 
@@ -311,7 +315,10 @@ function movePlayer(p, inp, dt, quiet) {
   if (Math.hypot(p.vx, p.vy) > 30) p.walkT += dt * 12;
 }
 
-function mainRang(p) { return game.rangs.find(r => r.owner === p && r.main); }
+function setAmmo(p, n) { p.ammo = clamp(n, 0, MAX_AMMO); p.hasRang = p.ammo > 0; }
+// Your own boomerangs that are out in the world (not grey ones, not Triple's temporary extras)
+function ownRangs(p) { return game.rangs.filter(r => r.owner === p && !r.temp && !r.neutral); }
+function mainRang(p) { const own = ownRangs(p); return own.find(r => r.state !== 'dropped') || own[0]; }
 
 function updatePlayer(p, dt) {
   if (!p.alive) return;
@@ -322,9 +329,11 @@ function updatePlayer(p, dt) {
   p.padCd = Math.max(0, p.padCd - dt);
   const frozen = p.frozen > 0;
   const stick = Math.hypot(inp.ax, inp.ay) > 0.3;
+  // Explosive boomerangs are used up: a fresh one appears in your hand shortly after
+  if (p.regenT > 0) { p.regenT -= dt; if (p.regenT <= 0) { setAmmo(p, p.ammo + 1); emit('regen', { i: p.i, x: R0(p.x), y: R0(p.y) }); } }
 
   // Teleport power: dash while your boomerang is out -> warp to it
-  const mine = !p.hasRang ? mainRang(p) : null;
+  const mine = mainRang(p);
   p.teleportNow = false;
   if (inp.dash && !p.prevDash && !frozen && mine && has(p, 'teleport') && p.dashCd <= 0 && !solidAt(mine.x, mine.y)) {
     emit('teleport', { x: R0(p.x), y: R0(p.y), x2: R0(mine.x), y2: R0(mine.y) });
@@ -341,7 +350,7 @@ function updatePlayer(p, dt) {
   }
   // Holding throw while unarmed = call it back (after a short hold, so a quick drag can curve it instead),
   // or steer it with telekinesis
-  const holding = inp.throw && !p.hasRang && !frozen;
+  const holding = inp.throw && p.ammo === 0 && !frozen; // both hands empty
   p.holdT = holding ? p.holdT + dt : 0;
   const canCall = game.opts.pull && p.holdT > T.holdToCall;
   p.steering = holding && has(p, 'tele') && mine && mine.state !== 'dropped';
@@ -368,7 +377,7 @@ function updatePlayer(p, dt) {
   else if (has(p, 'disguise') && p.stillT > T.disguiseAfter && !p.disguised) { p.disguised = true; emit('disguise', { x: R0(p.x), y: R0(p.y) }); }
 
   // Throw: hold to charge, release to throw at the locked aim
-  if (!frozen && inp.throw && !p.prevThrow && p.hasRang) {
+  if (!frozen && inp.throw && !p.prevThrow && p.ammo > 0) {
     p.charging = true; p.charge = 0; p.aimStick = Math.hypot(inp.ax, inp.ay) > 0.3;
     if (p.aimStick) p.aim = Math.atan2(inp.ay, inp.ax);
   }
@@ -388,6 +397,7 @@ function updatePlayer(p, dt) {
       if (k.type === 'shield') p.shield = true;
       else if (k.type === 'bamboo') p.bamboo = T.bamboo;
       else {
+        if (k.type === 'extra' && !has(p, 'extra')) setAmmo(p, p.ammo + 1); // second boomerang right away
         p.powers = p.powers.filter(x => x !== k.type); p.powers.push(k.type);
         if (p.powers.length > MAX_POWERS) p.powers.shift(); // oldest drops off
       }
@@ -432,7 +442,7 @@ function separatePlayers() {
 
 // Slash: deadly with a boomerang in hand, a knockback shove without one. Always parries.
 function slash(p) {
-  const armed = p.hasRang;
+  const armed = p.ammo > 0;
   p.slashT = 0.2; p.slashCd = T.slashCd; p.slashArmed = armed;
   p.kbx += Math.cos(p.face) * T.lunge; p.kby += Math.sin(p.face) * T.lunge;
   p.charging = false;
@@ -446,20 +456,18 @@ function slash(p) {
       else {
         const a = Math.atan2(q.y - p.y, q.x - p.x);
         q.kbx += Math.cos(a) * T.shove; q.kby += Math.sin(a) * T.shove; q.charging = false;
+        q.lastHitBy = p; q.lastHitT = game.time; // shoved into a pit = your kill
         emit('shove', { x: R0(q.x), y: R0(q.y) });
       }
     }
   }
   for (const d of game.decoys.slice()) if (d.owner !== p && Math.hypot(d.x - p.x, d.y - p.y) < reach) popDecoy(d);
-  for (const r of game.rangs) { // parry
+  for (const r of game.rangs.slice()) { // swat: knock incoming boomerangs out of the air
     if (r.owner === p || r.state === 'dropped') continue;
     const d = Math.hypot(r.x - p.x, r.y - p.y);
     if (d < reach + 12 && (d < 26 || Math.abs(angDiff(Math.atan2(r.y - p.y, r.x - p.x), p.face)) < 1.6)) {
-      const sp = Math.max(560, Math.hypot(r.vx, r.vy));
-      r.vx = Math.cos(p.face) * sp; r.vy = Math.sin(p.face) * sp; r.speed = sp;
-      r.state = 'out'; r.traveled = 0; r.maxDist = 320; r.bounces = 0; r.t = 0;
-      r.immune = p; r.immuneT = 0.5; r.parried = true;
       emit('spark', { x: R0(r.x), y: R0(r.y), s: 1 });
+      dropRang(r);
     }
   }
   const fx = p.x + Math.cos(p.face) * 38, fy = p.y + Math.sin(p.face) * 38;
@@ -467,7 +475,7 @@ function slash(p) {
 }
 
 function newRang(o) {
-  return Object.assign({ id: game.nextId++, spin: 0, t: 0, immune: null, immuneT: 0, bounces: 0, stateT: 0, trailD: 0, parried: false, exploded: false }, o);
+  return Object.assign({ id: game.nextId++, spin: 0, t: 0, immune: null, immuneT: 0, stateT: 0, trailD: 0, exploded: false, temp: false, neutral: false }, o);
 }
 
 function throwRang(p, power) {
@@ -476,98 +484,117 @@ function throwRang(p, power) {
   const angles = has(p, 'multi') ? [0, -0.3, 0.3] : [0];
   angles.forEach((da, n) => {
     const a = p.aim + da;
+    let sx = p.x + Math.cos(a) * 14, sy = p.y + Math.sin(a) * 14;
+    if (solidAt(sx, sy)) { sx = p.x; sy = p.y; } // hugging a wall: start from the thrower instead of inside it
     game.rangs.push(newRang({
-      owner: p, x: p.x + Math.cos(a) * 14, y: p.y + Math.sin(a) * 14, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-      speed, state: 'out', traveled: 0, maxDist, main: n === 0,
+      owner: p, x: sx, y: sy, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+      speed, state: 'out', traveled: 0, maxDist, temp: n > 0, // Triple's side boomerangs vanish when they're done
       drill: has(p, 'drill'), boom: has(p, 'boom'), fire: has(p, 'fire'), ice: has(p, 'ice'),
     }));
   });
-  p.face = p.aim; p.hasRang = false; emit('sfx', 'throw');
+  p.face = p.aim; setAmmo(p, p.ammo - 1); emit('sfx', 'throw');
 }
 
+function removeRang(r) { const i = game.rangs.indexOf(r); if (i >= 0) game.rangs.splice(i, 1); }
+// A player takes a boomerang into their hand (if they have a free hand)
 function catchRang(p, r) {
-  const i = game.rangs.indexOf(r); if (i >= 0) game.rangs.splice(i, 1);
-  if (r.main) { p.hasRang = true; emit('sfx', 'catch'); }
+  if (r.temp) { removeRang(r); return; }
+  if (p.ammo >= MAX_AMMO) { if (r.state !== 'dropped') dropRang(r); return; } // hands full: it lands at your feet
+  removeRang(r);
+  r.owner = p; r.neutral = false;
+  setAmmo(p, p.ammo + 1); emit('sfx', 'catch');
 }
+// Nearest open (walkable) tile centre to a point, searching outward. Used so nothing ever rests inside a wall.
+function nearestOpen(x, y) {
+  const sx = clamp(Math.floor(x / TILE), 0, COLS - 1), sy = clamp(Math.floor(y / TILE), 0, ROWS - 1);
+  let best = null, bd = Infinity;
+  for (let rad = 1; rad < Math.max(COLS, ROWS) && !best; rad++) {
+    for (let ty = sy - rad; ty <= sy + rad; ty++) for (let tx = sx - rad; tx <= sx + rad; tx++) {
+      if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS || !walkable(game.grid[ty][tx])) continue;
+      const cx = tx * TILE + TILE / 2, cy = ty * TILE + TILE / 2, d = dist2(cx, cy, x, y);
+      if (d < bd) { bd = d; best = { x: cx, y: cy }; }
+    }
+  }
+  return best || { x, y };
+}
+// It falls to the floor and stays there until someone picks it up (or the owner calls it back)
 function dropRang(r) {
-  if (!r.main) { const i = game.rangs.indexOf(r); if (i >= 0) game.rangs.splice(i, 1); return; }
+  if (r.temp) { removeRang(r); return; }
+  if (!walkable(tileAt(r.x, r.y))) { const o = nearestOpen(r.x, r.y); r.x = o.x; r.y = o.y; } // never rest inside a wall or on a pit
   r.state = 'dropped'; r.vx = r.vy = 0; r.stateT = 0;
   emit('drop', { x: R0(r.x), y: R0(r.y) });
 }
 function setState(r, s) { if (r.state !== s) { r.state = s; r.stateT = 0; } }
 
-// Move a flying boomerang one step, bouncing off solid tiles. Returns true if it bounced.
+// Outbound/steered flight. Returns true if it hit something solid (it doesn't move into it).
 function flyStep(r, dt) {
   const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt;
+  const move = () => { r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); };
+  if (!r.drill && solidAt(r.x, r.y)) { move(); return false; } // let go over a wall during a call-back: drift out first
   if (r.drill) { // drills straight through everything, breaking boxes
     if (tileAt(nx, ny) === CRATE) breakCrate(Math.floor(nx / TILE), Math.floor(ny / TILE));
-    r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); return false;
+    move(); return false;
   }
-  if (!solidAt(nx, ny)) { r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); return false; }
+  if (!solidAt(nx, ny)) { move(); return false; }
   const tx = Math.floor(nx / TILE), ty = Math.floor(ny / TILE);
   if (game.grid[ty] && game.grid[ty][tx] === CRATE) breakCrate(tx, ty);
   if (r.boom) explode(r, nx, ny);
-  const hx = solidAt(nx, r.y), hy = solidAt(r.x, ny);
-  if (hx) r.vx = -r.vx;
-  if (hy) r.vy = -r.vy;
-  if (!hx && !hy) { r.vx = -r.vx; r.vy = -r.vy; } // corner
-  r.vx *= 0.7; r.vy *= 0.7; r.speed *= 0.7; r.bounces++;
-  emit('spark', { x: R0(r.x), y: R0(r.y), s: 1 });
   return true;
 }
 
 function updateRang(r, dt) {
   r.t += dt; r.stateT += dt;
   if (r.immuneT > 0) { r.immuneT -= dt; if (r.immuneT <= 0) r.immune = null; }
-  const o = r.owner;
+  const o = r.owner, ownerOk = o.alive && !o.falling && !r.neutral;
 
   if (r.state === 'dropped') {
-    if (o.alive && !o.falling) {
-      if (o.recalling && r.main) { setState(r, 'recall'); r.speed = 120; emit('sfx', 'recall'); }
-      else if (!o.hasRang && dist2(o.x, o.y, r.x, r.y) < (PLAYER_R + 14) ** 2) { catchRang(o, r); return; }
+    if (ownerOk && o.recalling) { setState(r, 'recall'); r.speed = 150; emit('sfx', 'recall'); }
+    else {
+      // walk over it to pick it up: your own, or a grey one (its owner is out) if you have a free hand
+      for (const p of game.players) {
+        if (!p.alive || p.falling || p.ammo >= MAX_AMMO || (!r.neutral && p !== o)) continue;
+        if (dist2(p.x, p.y, r.x, r.y) < (PLAYER_R + 14) ** 2) { catchRang(p, r); return; }
+      }
+      return;
     }
-    if (r.state === 'dropped') return;
   }
-  if (!o.alive || o.falling) { if (r.state !== 'dropped') dropRang(r); return; }
+  if (!ownerOk) { dropRang(r); return; }
 
-  // Owner holding throw: summon (or steer with telekinesis)
-  if (r.main && o.recalling && r.state !== 'recall') { setState(r, 'recall'); r.speed = Math.max(200, Math.hypot(r.vx, r.vy) * 0.5); emit('sfx', 'recall'); }
-  if (r.state === 'recall' && !o.recalling) { setState(r, 'return'); r.bounces = 0; }
-  if (r.main && o.steering) setState(r, 'tele');
-  else if (r.state === 'tele') { setState(r, 'return'); r.bounces = 0; }
+  // Owner holding throw with empty hands: summon it (or steer it, with telekinesis)
+  if (o.recalling && r.state !== 'recall') { setState(r, 'recall'); r.speed = Math.max(200, Math.hypot(r.vx, r.vy) * 0.5); emit('sfx', 'recall'); }
+  if (r.state === 'recall' && !o.recalling) setState(r, 'return');
+  if (o.steering && r.state !== 'recall' && !(r.clashT > game.time)) setState(r, 'tele');
+  else if (r.state === 'tele') setState(r, 'return');
 
   if (r.state === 'out') {
     const f = 1 - 0.55 * (r.traveled / r.maxDist) ** 2;
-    const sp = Math.hypot(r.vx, r.vy) || 1, want = r.speed * f;
+    const want = r.speed * f;
     let ang = Math.atan2(r.vy, r.vx);
     // Curve: push the aim stick after throwing to bend it around corners
     const ci = o.input;
-    if (!o.bot && !r.parried && Math.hypot(ci.ax, ci.ay) > 0.3) {
+    if (!o.bot && Math.hypot(ci.ax, ci.ay) > 0.3) {
       const d = angDiff(Math.atan2(ci.ay, ci.ax), ang), maxTurn = T.curve * dt;
       ang += clamp(d, -maxTurn, maxTurn);
     }
     r.vx = Math.cos(ang) * want; r.vy = Math.sin(ang) * want;
-    flyStep(r, dt);
+    if (flyStep(r, dt)) { // hit a wall/box/tree: it sticks there
+      if (game.rangs.includes(r)) { emit('spark', { x: R0(r.x), y: R0(r.y), s: 1 }); dropRang(r); }
+      return;
+    }
     r.traveled += want * dt;
-    if (r.traveled >= r.maxDist) { setState(r, 'return'); if (r.boom) explode(r, r.x, r.y); }
-  } else if (r.state === 'return') {
+    if (r.traveled >= r.maxDist) {
+      if (r.boom) { explode(r, r.x, r.y); return; }
+      setState(r, 'return'); r.speed = want;
+    }
+  } else if (r.state === 'return' || r.state === 'recall') {
+    // Straight back to the owner, through walls and boxes, like it's being pulled. Deadly on the way.
+    const recall = r.state === 'recall';
     const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
-    r.speed = Math.min(r.speed + 900 * dt, T.returnSpeed);
-    const k = Math.min(1, dt * (d < 70 ? 16 : 5));
-    r.vx = lerp(r.vx, dx / d * r.speed, k); r.vy = lerp(r.vy, dy / d * r.speed, k);
-    if (r.parried) r.parried = false;
-    // still inside a wall (e.g. a recall was let go over one)? drift out before colliding again
-    if (solidAt(r.x, r.y) && !r.drill) { r.x += r.vx * dt; r.y += r.vy * dt; }
-    else flyStep(r, dt);
-    if (d < PLAYER_R + 12 && (!o.hasRang || !r.main)) { catchRang(o, r); return; }
-    if (r.stateT > T.maxReturn && !r.drill) { dropRang(r); return; }
-  } else if (r.state === 'recall') {
-    // Summon: straight to the owner, over walls, accelerating. Deadly on the way.
-    const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
-    r.speed = Math.min(r.speed + T.recallAccel * dt, T.recallMax);
+    r.speed = Math.min(r.speed + (recall ? T.recallAccel : 1000) * dt, recall ? T.recallMax : T.returnSpeed);
     r.vx = dx / d * r.speed; r.vy = dy / d * r.speed;
+    const stepLen = r.speed * dt;
+    if (d <= stepLen + PLAYER_R + 10) { catchRang(o, r); return; }
     r.x += r.vx * dt; r.y += r.vy * dt;
-    if (d < PLAYER_R + 14) { catchRang(o, r); return; }
   } else if (r.state === 'tele') {
     // Telekinesis: steer with the aim stick (or movement if none), within a radius of the owner.
     const inp = o.input; let sx = inp.ax, sy = inp.ay;
@@ -578,16 +605,12 @@ function updateRang(r, dt) {
     const ox = r.x - o.x, oy = r.y - o.y, od = Math.hypot(ox, oy);
     if (od > T.teleRadius) { r.vx -= ox / od * 900 * dt; r.vy -= oy / od * 900 * dt; }
     r.speed = Math.hypot(r.vx, r.vy);
-    flyStep(r, dt); r.bounces = 0;
+    if (flyStep(r, dt)) { if (game.rangs.includes(r)) dropRang(r); return; }
   }
   if (!game.rangs.includes(r)) return;
 
-  // Stuck: too many bounces, too slow, or out too long -> it drops to the floor
-  if ((r.state === 'out' || r.state === 'return') && !r.drill &&
-      (r.bounces >= T.maxBounces || (r.speed < T.minSpeed2 && r.stateT > 0.2) || r.t > T.maxFlight)) { dropRang(r); return; }
-
   // Trails
-  if ((r.fire || r.ice) && r.state !== 'dropped') {
+  if (r.fire || r.ice) {
     r.trailD += Math.hypot(r.vx, r.vy) * dt;
     if (r.trailD > T.trailGap) {
       r.trailD = 0;
@@ -595,14 +618,12 @@ function updateRang(r, dt) {
       if (game.trails.length > 180) game.trails.shift();
     }
   }
-  // Hits — on the way out, on the way back, and while being summoned
+  // Hits — on the way out, on the way back, and while being summoned. Never the owner.
   for (const q of game.players) {
-    if (q === r.immune || !q.alive || q.falling) continue;
-    if (q === o && !r.parried) continue;
-    if (sameTeam(o, q)) continue; // no friendly fire
+    if (q === o || q === r.immune || !q.alive || q.falling || sameTeam(o, q)) continue;
     if (dist2(q.x, q.y, r.x, r.y) < (PLAYER_R + T.rangR) ** 2) {
-      if (r.boom && !r.exploded) explode(r, r.x, r.y);
-      else kill(q, o, false, r);
+      if (r.boom) { explode(r, r.x, r.y); return; }
+      kill(q, o, false, r);
     }
   }
   for (const d of game.decoys.slice()) if (d.owner !== o && dist2(d.x, d.y, r.x, r.y) < (PLAYER_R + T.rangR) ** 2) popDecoy(d);
@@ -625,14 +646,21 @@ function updateDecoys(dt) {
 }
 
 function rangClashes() {
-  const rs = game.rangs.filter(r => r.state === 'out' || r.state === 'return' || r.state === 'tele');
+  const rs = game.rangs.filter(r => (r.state === 'out' || r.state === 'return' || r.state === 'tele') && !(r.clashT > game.time));
   for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
     const a = rs[i], b = rs[j];
-    if (a.owner === b.owner) continue;
-    if (dist2(a.x, a.y, b.x, b.y) < 22 * 22) {
-      for (const r of [a, b]) { setState(r, 'return'); r.speed = 260; r.vx = -r.vx * 0.4; r.vy = -r.vy * 0.4; r.bounces++; }
-      emit('spark', { x: R0((a.x + b.x) / 2), y: R0((a.y + b.y) / 2), s: 1 });
+    if (a.owner === b.owner || a.clashT > game.time || b.clashT > game.time) continue;
+    const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+    if (d >= 22) continue;
+    if ((b.vx - a.vx) * dx + (b.vy - a.vy) * dy > 0) continue; // already moving apart
+    const nx = d ? dx / d : 1, ny = d ? dy / d : 0;
+    for (const [r, sgn] of [[a, -1], [b, 1]]) {
+      setState(r, 'return'); r.speed = 260;
+      r.vx = nx * sgn * 260; r.vy = ny * sgn * 260;      // knock them apart
+      r.x += nx * sgn * (12 - d / 2); r.y += ny * sgn * (12 - d / 2);
+      r.clashT = game.time + 0.35;                          // can't clash again straight away
     }
+    emit('spark', { x: R0((a.x + b.x) / 2), y: R0((a.y + b.y) / 2), s: 1 });
   }
 }
 
@@ -650,8 +678,11 @@ function updateTrails(dt) {
   }
 }
 
+// Explosive boomerangs are used up; the owner gets a fresh one in hand shortly after.
 function explode(r, x, y) {
   if (r.exploded) return; r.exploded = true;
+  removeRang(r);
+  if (!r.temp && r.owner.alive) r.owner.regenT = T.regen;
   const R = T.explodeR;
   emit('boom', { x: R0(x), y: R0(y), R });
   for (const q of game.players) if (q !== r.owner && !sameTeam(r.owner, q) && q.alive && dist2(q.x, q.y, x, y) < (R + PLAYER_R) ** 2) kill(q, r.owner);
@@ -685,14 +716,35 @@ function kill(q, by, fell, rang) {
   if (!fell && q.inv > 0) return;
   if (!fell && q.shield) {
     q.shield = false; q.inv = 0.6;
-    if (rang) { setState(rang, 'return'); rang.speed = 400; rang.parried = false; }
+    if (rang && game.rangs.includes(rang)) dropRang(rang); // blocked: it falls
     emit('shield', { x: R0(q.x), y: R0(q.y) });
     return;
   }
-  q.alive = false; q.charging = false;
-  if (q.hasRang && !fell) game.rangs.push(newRang({ owner: q, x: q.x, y: q.y, vx: 0, vy: 0, speed: 0, state: 'dropped', traveled: 0, maxDist: 0, spin: rand(0, 6), main: true }));
-  q.hasRang = false;
-  emit('kill', { i: q.i, x: R0(q.x), y: R0(q.y), f: fell ? 1 : 0 });
+  q.alive = false; q.charging = false; q.deaths++;
+  // Their boomerangs turn grey: anyone with a free hand can grab them
+  for (let k = 0; k < q.ammo; k++) {
+    const a = rand(0, Math.PI * 2), o = fell ? nearestOpen(q.x, q.y) : { x: q.x + Math.cos(a) * 10, y: q.y + Math.sin(a) * 10 };
+    game.rangs.push(newRang({ owner: q, x: o.x, y: o.y, vx: 0, vy: 0, speed: 0, state: 'dropped', traveled: 0, maxDist: 0, spin: rand(0, 6), neutral: true }));
+  }
+  for (const r of game.rangs.slice()) if (r.owner === q) { if (r.temp) removeRang(r); else { r.neutral = true; if (r.state !== 'dropped') dropRang(r); } }
+  setAmmo(q, 0); q.regenT = 0;
+
+  // Scoring: +1 per kill. Shoving someone into a pit counts as your kill. Dying on your own costs a point.
+  let killer = by;
+  if ((!killer || killer === q) && q.lastHitBy && game.time - q.lastHitT < T.creditTime) killer = q.lastHitBy;
+  if (killer && killer !== q && !sameTeam(killer, q)) {
+    killer.kills++;
+    for (const p of game.players) if (p === killer || sameTeam(p, killer)) p.score++; // teams share points
+  } else {
+    for (const p of game.players) if (p === q || sameTeam(p, q)) p.score = Math.max(0, p.score - 1);
+    killer = null;
+  }
+  const how = fell ? 'pit' : rang ? rang.state : (by && by !== q && Math.hypot(by.x - q.x, by.y - q.y) < 80 ? 'slash' : 'other');
+  emit('kill', { i: q.i, x: R0(q.x), y: R0(q.y), f: fell ? 1 : 0, by: killer ? killer.i : -1, how, scores: game.players.map(p => p.score) });
+  if (!game.winner) {
+    const top = game.players.filter(p => p.score >= game.points).sort((a, b) => b.score - a.score)[0];
+    if (top) { game.winner = top; game.phase = 'end'; game.phaseT = 1.8; game.slowT = 0.9; return; }
+  }
   if (game.players.filter(p => p.alive).length <= 1) game.slowT = 0.7;
 }
 
@@ -730,8 +782,13 @@ function distField(gx, gy) {
       const nx = cx + dx, ny = cy + dy;
       if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
       const n = nx + ny * COLS;
-      if (f[n] >= 0 || !walkable(game.grid[ny][nx])) continue;
-      f[n] = f[c] + 1; q.push(n);
+      if (f[n] >= 0) continue;
+      const v = game.grid[ny][nx];
+      // a 1-tile-wide pit with floor on both sides is crossable with a dash
+      const hop = v === PIT && cx + 2 * dx >= 0 && cx + 2 * dx < COLS && cy + 2 * dy >= 0 && cy + 2 * dy < ROWS &&
+        walkable(game.grid[cy + 2 * dy][cx + 2 * dx]) && walkable(game.grid[cy][cx]);
+      if (!walkable(v) && !hop) continue;
+      f[n] = f[c] + (hop ? 3 : 1); q.push(n);
     }
   }
   return f;
@@ -746,10 +803,11 @@ function pathDir(p, b, gx, gy) {
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const nx = cx + dx, ny = cy + dy;
     if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
-    if (dx && dy && (!walkable(game.grid[cy][nx]) || !walkable(game.grid[ny][cx]))) continue;
+    if (dx && dy && (!walkable(game.grid[cy][nx]) || !walkable(game.grid[ny][cx]) || game.grid[ny][nx] === PIT)) continue;
     const v = f[nx + ny * COLS];
     if (v >= 0 && v < bv) { bv = v; best = [nx, ny]; }
   }
+  b.hop = !!best && game.grid[best[1]][best[0]] === PIT; // next step is a pit: dash over it
   if (!best) return direct(false);
   const wx = best[0] * TILE + TILE / 2 - p.x, wy = best[1] * TILE + TILE / 2 - p.y, d = Math.hypot(wx, wy) || 1;
   return [wx / d, wy / d, true];
@@ -758,13 +816,23 @@ function pathDir(p, b, gx, gy) {
 function updateBot(p, dt) {
   const b = p.bot, D = b.diff, inp = { mx: 0, my: 0, ax: 0, ay: 0, throw: false, dash: false, slash: false };
   b.think -= dt; b.fieldAge += dt; b.strafeT -= dt;
+  if (p.hasRang) b.steerT = 0;
   if (b.strafeT <= 0) { b.strafe = Math.random() < 0.5 ? 1 : -1; b.strafeT = rand(0.8, 2); }
   // Bots can't see snacks hiding in grass or disguised as boxes unless they're close
   const enemies = game.players.filter(q => q !== p && q.alive && !q.falling && !sameTeam(p, q) &&
     (!(q.hidden || q.disguised) || Math.hypot(q.x - p.x, q.y - p.y) < 90));
   if (!enemies.length || game.phase === 'between') { // nobody visible: wander toward the middle
-    if (game.phase !== 'between' && !p.hasRang) { const m = mainRang(p); if (m && m.state === 'dropped') inp.throw = true; }
-    else if (game.phase !== 'between') { const [dx, dy] = pathDir(p, b, WW / 2 + b.strafe * 120, WH / 2); inp.mx = dx * 0.6; inp.my = dy * 0.6; }
+    if (game.phase !== 'between' && !p.hasRang) { const m = mainRang(p); if (m && m.state === 'dropped') { if (game.opts.pull) inp.throw = true; else { const [dx, dy] = pathDir(p, b, m.x, m.y); inp.mx = dx; inp.my = dy; } } }
+    else if (game.phase !== 'between') { // search: check grass patches and random spots until someone turns up
+      b.patrolT = (b.patrolT || 0) - dt;
+      if (!b.patrol || b.patrolT <= 0 || Math.hypot(b.patrol.x - p.x, b.patrol.y - p.y) < 30) {
+        const spots = [];
+        for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) if (game.grid[y][x] === GRASS || (game.grid[y][x] === FLOOR && Math.random() < 0.05)) spots.push({ x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 });
+        b.patrol = spots.length ? spots[Math.floor(Math.random() * spots.length)] : { x: WW / 2, y: WH / 2 };
+        b.patrolT = 5;
+      }
+      const [dx, dy] = pathDir(p, b, b.patrol.x, b.patrol.y); inp.mx = dx * 0.8; inp.my = dy * 0.8;
+    }
     p.input = inp; return;
   }
   let tgt = enemies[0], td = Infinity;
@@ -793,15 +861,19 @@ function updateBot(p, dt) {
   } else {
     let goal = null;
     const nearPow = game.pickups.reduce((best, k) => { const d = Math.hypot(k.x - p.x, k.y - p.y); return d < 220 && (!best || d < best.d) ? { k, d } : best; }, null);
+    // grey boomerangs (their owner is out) are free for the taking
+    const grey = game.rangs.filter(r => r.neutral && r.state === 'dropped').map(r => ({ r, d: Math.hypot(r.x - p.x, r.y - p.y) })).sort((a, c) => a.d - c.d)[0];
     if (!p.hasRang) {
       const mine = mainRang(p);
+      if (grey && grey.d < 300 && (!mine || grey.d < Math.hypot(mine.x - p.x, mine.y - p.y))) goal = grey.r;
+      else
       if (mine && mine.state === 'dropped') {
         const d = Math.hypot(mine.x - p.x, mine.y - p.y);
-        if (d > 160 || !lineClear(p.x, p.y, mine.x, mine.y) || tileAt(mine.x, mine.y) === PIT) inp.throw = true; // summon it
+        if (game.opts.pull && (d > 160 || !lineClear(p.x, p.y, mine.x, mine.y))) inp.throw = true; // summon it
         else goal = mine;
       } else if (mine && mine.state === 'recall') inp.throw = true;
-      else if (mine && has(p, 'tele') && mine.state !== 'dropped') { // steer it at the target
-        inp.throw = true; inp.ax = tgt.x - mine.x; inp.ay = tgt.y - mine.y;
+      else if (mine && has(p, 'tele') && mine.state !== 'dropped' && td < T.teleRadius + 40 && (b.steerT || 0) < 3 && lineClear(mine.x, mine.y, tgt.x, tgt.y)) { // steer it at the target
+        inp.throw = true; inp.ax = tgt.x - mine.x; inp.ay = tgt.y - mine.y; b.steerT = (b.steerT || 0) + dt;
       }
       if (!goal && !inp.throw) {
         if (td < 50 && p.slashCd <= 0 && Math.random() < D.aggro) { inp.slash = true; inp.ax = tgt.x - p.x; inp.ay = tgt.y - p.y; } // shove
@@ -814,7 +886,8 @@ function updateBot(p, dt) {
       }
     } else {
       const los = has(p, 'drill') || lineClear(p.x, p.y, tgt.x, tgt.y);
-      if (nearPow && nearPow.d < 120) goal = nearPow.k;
+      if (p.ammo < MAX_AMMO && grey && grey.d < 140) goal = grey.r; // grab a second one
+      else if (nearPow && nearPow.d < 120) goal = nearPow.k;
       else if (!los || td > 380) goal = tgt;
       else {
         const d = td || 1, ox = (tgt.x - p.x) / d, oy = (tgt.y - p.y) / d;
@@ -843,8 +916,13 @@ function updateBot(p, dt) {
       b.noPathT = ok ? 0 : b.noPathT + dt;
     }
   }
-  if (tileAt(p.x + inp.mx * 22, p.y + inp.my * 22) === PIT && p.dashT <= 0) { inp.mx = -inp.mx * 0.3; inp.my = -inp.my * 0.3; }
-  if (inp.dash && (tileAt(p.x + inp.mx * 110, p.y + inp.my * 110) === PIT || tileAt(p.x + inp.mx * 60, p.y + inp.my * 60) === PIT)) inp.dash = false;
+  if (tileAt(p.x + inp.mx * 22, p.y + inp.my * 22) === PIT && p.dashT <= 0) {
+    const land = tileAt(p.x + inp.mx * 100, p.y + inp.my * 100);
+    if (b.hop && p.dashCd <= 0 && walkable(land) && Math.hypot(inp.mx, inp.my) > 0.7) { inp.dash = true; b.hopping = true; }
+    else { inp.mx = -inp.mx * 0.3; inp.my = -inp.my * 0.3; }
+  }
+  if (b.hopping) b.hopping = false;
+  else if (inp.dash && (tileAt(p.x + inp.mx * 110, p.y + inp.my * 110) === PIT || tileAt(p.x + inp.mx * 60, p.y + inp.my * 60) === PIT)) inp.dash = false;
 
   if (b.mode === 'tap') {
     inp.ax = tgt.x - p.x; inp.ay = tgt.y - p.y; inp.slash = true; b.mode = 'idle'; b.think = D.react;
@@ -855,7 +933,8 @@ function updateBot(p, dt) {
       const ex = b.crate ? b.crate.x : tgt.x + tgt.vx * lead, ey = b.crate ? b.crate.y : tgt.y + tgt.vy * lead;
       const a = Math.atan2(ey - p.y, ex - p.x) + b.aimErr;
       inp.ax = Math.cos(a); inp.ay = Math.sin(a);
-      if (p.charge < b.chargeGoal || !p.charging) inp.throw = true;
+      if (!p.charging) inp.throw = !p.prevThrow; // let go first if throw was already held (e.g. after a call-back)
+      else if (p.charge < b.chargeGoal) inp.throw = true;
       else { inp.throw = false; b.mode = 'idle'; b.crate = null; b.think = D.react + rand(0, 0.3); }
     }
   }
@@ -871,12 +950,12 @@ function encodeSnapshot(g) {
   const P = g.players.map(p => [
     p.i, R0(p.x), R0(p.y), R0(p.face * 100),
     (p.alive ? 1 : 0) | (p.hasRang ? 2 : 0) | (p.charging ? 4 : 0) | (p.shield ? 8 : 0) | (p.dashT > 0 ? 16 : 0) | (p.inv > 0 ? 32 : 0) | (p.frozen > 0 ? 64 : 0) | (p.recalling || p.steering ? 128 : 0) |
-      (p.hidden ? 256 : 0) | (p.disguised ? 512 : 0) | (p.bamboo > 0 ? 1024 : 0),
+      (p.hidden ? 256 : 0) | (p.disguised ? 512 : 0) | (p.bamboo > 0 ? 1024 : 0) | (p.ammo > 1 ? 2048 : 0) | (p.regenT > 0 ? 4096 : 0),
     p.charging ? R0(p.charge * 100) : 0, powerBits(p),
     R0(p.vx), R0(p.vy), R0(p.falling * 100), R0(p.aim * 100),
   ]);
   const R = g.rangs.map(r => [r.id, R0(r.x), R0(r.y), r.owner.i,
-    RSTATE.indexOf(r.state) | (r.fire ? 8 : 0) | (r.drill ? 16 : 0) | (r.ice ? 32 : 0) | (r.boom ? 64 : 0)]);
+    RSTATE.indexOf(r.state) | (r.fire ? 8 : 0) | (r.drill ? 16 : 0) | (r.ice ? 32 : 0) | (r.boom ? 64 : 0) | (r.neutral ? 128 : 0)]);
   const K = g.pickups.map(k => [k.id, k.x, k.y, POWER_KEYS.indexOf(k.type)]);
   const L = g.trails.map(t => [t.id, R0(t.x), R0(t.y), t.k === 'fire' ? 0 : 1, R0(t.t * 10)]);
   const D = g.decoys.map(d => [d.id, R0(d.x), R0(d.y), d.owner.i, R0(d.face * 100)]);

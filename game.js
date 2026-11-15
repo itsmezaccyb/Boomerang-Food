@@ -31,10 +31,24 @@ const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt
 // ---------------------------------------------------------------- sprites
 const SPRITE_NAMES = CHARS.map(c => c.key).concat(['boomerang', 'brick', 'crate', 'tree', 'skull', 'crown', 'boom', 'fire', 'multi', 'shoe', 'shield', 'ice', 'crystal', 'sparkles', 'drill', 'mask', 'decoy', 'dizzy', 'herb']);
 const SPR = {};
+function greyCopy(src) {
+  const c = document.createElement('canvas'); c.width = src.width; c.height = src.height;
+  const g = c.getContext('2d'); g.drawImage(src, 0, 0);
+  try {
+    const d = g.getImageData(0, 0, c.width, c.height), a = d.data;
+    for (let i = 0; i < a.length; i += 4) { const l = (a[i] * 0.3 + a[i + 1] * 0.59 + a[i + 2] * 0.11) * 0.8 + 40; a[i] = a[i + 1] = a[i + 2] = l; }
+    g.putImageData(d, 0, 0);
+  } catch (e) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = 'rgba(150,150,150,0.8)'; g.fillRect(0, 0, c.width, c.height); }
+  return c;
+}
 function loadSprites() {
   return Promise.all(SPRITE_NAMES.map(n => new Promise(res => {
     const img = new Image();
-    img.onload = () => { const c = document.createElement('canvas'); c.width = c.height = 160; c.getContext('2d').drawImage(img, 0, 0, 160, 160); SPR[n] = c; res(); };
+    img.onload = () => {
+      const c = document.createElement('canvas'); c.width = c.height = 160; c.getContext('2d').drawImage(img, 0, 0, 160, 160); SPR[n] = c;
+      if (n === 'boomerang') SPR.boomerang_grey = greyCopy(c); // free-for-all boomerangs (owner is out)
+      res();
+    };
     img.onerror = () => res();
     img.src = 'sprites/' + n + '.svg';
   })));
@@ -92,10 +106,12 @@ const Sound = {
 // ---------------------------------------------------------------- settings
 const defaultSlots = [{ type: 'human', char: 0 }, { type: 'cpu2', char: 1 }, { type: 'cpu2', char: 2 }, { type: 'cpu2', char: 3 },
   { type: 'off', char: 4 }, { type: 'off', char: 5 }, { type: 'off', char: 6 }, { type: 'off', char: 7 }];
-const settings = Object.assign({ slots: defaultSlots, points: 5, map: -1, name: '', server: '', camera: 'follow', mode: 'ffa', pw: 1, pull: true }, store('bb_settings') || {});
+const settings = Object.assign({ slots: defaultSlots, points: 10, map: -1, name: '', server: '', camera: 'follow', mode: 'ffa', pw: 1, pull: true }, store('bb_settings') || {});
 if (!Array.isArray(settings.slots)) settings.slots = defaultSlots;
 while (settings.slots.length < Sim.MAX_PLAYERS) settings.slots.push(Object.assign({}, defaultSlots[settings.slots.length])); // older saves had 4
 const saveSettings = () => store('bb_settings', settings);
+const POINT_OPTIONS = [5, 10, 15];
+if (!POINT_OPTIONS.includes(settings.points)) settings.points = 10; // older saves used 3/5/7
 
 // ---------------------------------------------------------------- input
 const keys = new Set();
@@ -246,8 +262,14 @@ function handleEvent(type, d) {
       }
       vfx.fx.push({ type: 'ghostup', x: d.x, y: d.y, t: 0, max: 1.1 });
       if (q && game.online) q.alive = false;
+      if (d.scores) d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; });
+      const k = P(d.by);
+      if (k) vfx.fx.push({ type: 'text', x: k.x, y: k.y - 34, text: '+1', col: k.color, t: 0, max: 1, big: true });
+      else if (q) vfx.fx.push({ type: 'text', x: d.x, y: d.y - 34, text: '-1', col: '#ff8a8a', t: 0, max: 1, big: true });
       break;
     }
+    case 'roundend': d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; }); showBanner('Next round', 900); break;
+    case 'regen': Sound.catch(); vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.35, col: '#ffd27a' }); break;
     case 'score': {
       d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; });
       const w = P(d.w);
@@ -264,6 +286,7 @@ function handleEvent(type, d) {
     case 'draw': d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; }); showBanner('Draw!', 1100); break;
     case 'result': {
       d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; });
+      if (d.kills) d.kills.forEach((k, n) => { if (game.players[n]) { game.players[n].kills = k; game.players[n].deaths = d.deaths[n]; } });
       setTimeout(() => showResult(P(d.w), d.team), 300);
       break;
     }
@@ -470,6 +493,7 @@ const net = {
       p.x = lerp(ea[1], e[1], t); p.y = lerp(ea[2], e[2], t);
       p.face = ea[3] / 100 + angDiff(e[3] / 100, ea[3] / 100) * t;
       p.alive = !!(f & 1); p.hasRang = !!(f & 2); p.charging = !!(f & 4); p.shield = !!(f & 8);
+      p.ammo = f & 2048 ? 2 : p.hasRang ? 1 : 0; p.regenT = f & 4096 ? 1 : 0;
       p.dashT = f & 16 ? 0.1 : 0; p.inv = f & 32 ? 0.1 : 0; p.charge = e[5] / 100;
       p.powers = Sim.bitsToPowers(e[6]); p.vx = e[7]; p.vy = e[8]; p.falling = e[9] / 100;
       p.frozen = f & 64 ? 1 : 0; p.recalling = !!(f & 128); p.aim = e[10] / 100;
@@ -485,7 +509,7 @@ const net = {
     game.rangs = b.R.map(r => {
       const ra = byId.get(r[0]) || r;
       return { id: r[0], x: lerp(ra[1], r[1], t), y: lerp(ra[2], r[2], t), owner: game.players.find(p => p.i === r[3]) || game.players[0],
-        state: Sim.RSTATE[r[4] & 7], fire: !!(r[4] & 8), ghost: !!(r[4] & 16), ice: !!(r[4] & 32), boom: !!(r[4] & 64) };
+        state: Sim.RSTATE[r[4] & 7], fire: !!(r[4] & 8), drill: !!(r[4] & 16), ice: !!(r[4] & 32), boom: !!(r[4] & 64), neutral: !!(r[4] & 128) };
     });
     game.trails = (b.L || []).map(l => ({ id: l[0], x: l[1], y: l[2], k: l[3] ? 'ice' : 'fire', t: l[4] / 10 }));
     game.pickups = b.K.map(k => ({ id: k[0], x: k[1], y: k[2], type: POWER_KEYS[k[3]] }));
@@ -617,9 +641,9 @@ function render(T) {
   }
   for (const r of game.rangs) if (r.state === 'dropped') { // lying on the floor: owner's colour ring so you can find yours
     const v = vfx.rang.get(r.id);
-    ctx.strokeStyle = r.owner.color; ctx.globalAlpha = 0.5 + Math.sin(T * 5) * 0.25; ctx.lineWidth = 3;
+    ctx.strokeStyle = r.neutral ? '#d8d8d8' : r.owner.color; ctx.globalAlpha = 0.5 + Math.sin(T * 5) * 0.25; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.ellipse(r.x, r.y + 4, 17, 9, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
-    drawSpr(ctx, 'boomerang', r.x, r.y, 24, v ? v.spin : 0);
+    drawSpr(ctx, r.neutral ? 'boomerang_grey' : 'boomerang', r.x, r.y, 24, v ? v.spin : 0);
   }
   for (const r of game.rangs) if (r.state === 'recall' || r.state === 'tele') { // tether line while summoning / steering
     ctx.strokeStyle = r.owner.color; ctx.globalAlpha = 0.45; ctx.lineWidth = 2; ctx.setLineDash([4, 6]); ctx.lineDashOffset = T * 60;
@@ -674,7 +698,7 @@ function render(T) {
     } else if (f.type === 'ghostup') {
       drawSpr(ctx, 'skull', f.x, f.y - k * 40, 26, Math.sin(k * 12) * 0.2, 1 - k);
     } else if (f.type === 'text') {
-      ctx.globalAlpha = 1 - k * k; ctx.font = '900 15px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.globalAlpha = 1 - k * k; ctx.font = `900 ${f.big ? 22 : 15}px ui-rounded, system-ui, sans-serif`; ctx.textAlign = 'center';
       ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.strokeText(f.text, f.x, f.y - k * 25);
       ctx.fillStyle = f.col; ctx.fillText(f.text, f.x, f.y - k * 25);
     }
@@ -745,9 +769,10 @@ function drawPlayer(p, T) {
     ctx.fillStyle = 'rgba(170,230,255,0.45)'; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
     roundRectAt(p.x - 22, p.y - 28, 44, 46, 8); ctx.fill(); ctx.stroke();
   }
-  if (p.hasRang && !p.falling) {
+  if (p.hasRang && !p.falling) { // one boomerang per hand
     const hx = p.x + Math.cos(p.face + 1.2) * 20, hy = p.y - bob + Math.sin(p.face + 1.2) * 14;
     drawSpr(ctx, 'boomerang', hx, hy, 18, p.face + (p.charging ? T * 20 : 0.6));
+    if ((p.ammo || 1) > 1) drawSpr(ctx, 'boomerang', p.x + Math.cos(p.face - 1.2) * 20, p.y - bob + Math.sin(p.face - 1.2) * 14, 18, p.face - 0.6);
   }
   if (p.slashT > 0) {
     const k = 1 - p.slashT / 0.2;
@@ -812,7 +837,7 @@ function drawTouchControls() {
     ctx.fillStyle = 'rgba(255,182,39,0.25)'; ctx.beginPath(); ctx.arc(tb.x, tb.y, tb.r, 0, 7); ctx.fill();
     ctx.strokeStyle = 'rgba(255,182,39,0.6)'; ctx.lineWidth = 2; ctx.stroke();
     drawSpr(ctx, 'boomerang', tb.x, tb.y - (me.hasRang ? 0 : 6), me.hasRang ? 44 : 30, -0.4);
-    if (!me.hasRang) { ctx.fillStyle = '#fff'; ctx.font = '900 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText((me.powers || []).includes('tele') ? 'HOLD: STEER' : 'HOLD: CALL', tb.x, tb.y + 24); }
+    if (!me.hasRang) { ctx.fillStyle = '#fff'; ctx.font = '900 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText(me.regenT > 0 ? 'RELOADING' : (me.powers || []).includes('tele') ? 'HOLD: STEER' : 'HOLD: CALL', tb.x, tb.y + 24); }
     ctx.globalAlpha = 1;
   }
   const sb = slashBtn();
@@ -882,7 +907,7 @@ function buildMenu() {
 }
 function buildSeg(el, cur, onPick, disabled) {
   el.innerHTML = '';
-  [3, 5, 7].forEach(n => {
+  POINT_OPTIONS.forEach(n => {
     const b = document.createElement('button'); b.textContent = n; b.className = cur === n ? 'on' : '';
     if (disabled) b.disabled = true; else b.onclick = () => onPick(n);
     el.appendChild(b);
@@ -1009,7 +1034,7 @@ function showResult(w, team) {
   const st = $('standings'); st.innerHTML = '';
   game.players.slice().sort((a, b) => b.score - a.score).forEach(p => {
     const d = document.createElement('div'); d.className = 'stand';
-    d.innerHTML = `<img src="sprites/${p.char.key}.svg" alt=""><span class="bar" style="color:${p.color}">${esc(playerLabel(p))}${p.bot ? ' <small style="opacity:.6">CPU</small>' : ''}</span><span class="pts">${p.score}</span>`;
+    d.innerHTML = `<img src="sprites/${p.char.key}.svg" alt=""><span class="bar" style="color:${p.color}">${esc(playerLabel(p))}${p.bot ? ' <small style="opacity:.6">CPU</small>' : ''}</span><span class="kd">${p.kills || 0} KO · ${p.deaths || 0} out</span><span class="pts">${p.score}</span>`;
     st.appendChild(d);
   });
   const host = !game.online || canManage();
