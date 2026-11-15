@@ -144,7 +144,7 @@ wss.on('connection', (ws) => {
       case 'host': {
         leaveRoom(ws); ws.name = cleanName(m.name);
         const r = { code: makeCode(), clients: new Map(), host: ws.id, points: 5, map: -1, mode: 'ffa', pw: 1, pull: true, g: null, tick: 0, events: [],
-          slots: [{ type: 'open' }, { type: 'open' }, { type: 'open' }, { type: 'open' }], tvHost: !!m.tv };
+          slots: Array.from({ length: Sim.MAX_PLAYERS }, (_, i) => ({ type: i < 4 ? 'open' : 'off' })), tvHost: !!m.tv };
         rooms.set(r.code, r); joinRoom(ws, r, !!m.tv);
         return;
       }

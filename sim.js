@@ -5,11 +5,15 @@
 (function (root) {
 'use strict';
 
-const TILE = 48, COLS = 20, ROWS = 12, WW = COLS * TILE, WH = ROWS * TILE;
+const TILE = 48;
+// Arena size varies per map; these track the arena currently being simulated (set by use()/buildMap()).
+let COLS = 20, ROWS = 12, WW = COLS * TILE, WH = ROWS * TILE;
+function setDims(c, r) { COLS = c; ROWS = r; WW = c * TILE; WH = r * TILE; }
+const MAX_PLAYERS = 8;
 const FLOOR = 0, WALL = 1, CRATE = 2, PIT = 3, TREE = 4, GRASS = 5, ICE = 6, PAD = 7;
 const TEAM_COLORS = ['#ff5d73', '#43a8ff'], TEAM_NAMES = ['Red', 'Blue'];
 const PLAYER_R = 16;
-const PCOLORS = ['#ff5d73', '#43a8ff', '#ffd23f', '#5ee06b'];
+const PCOLORS = ['#ff5d73', '#43a8ff', '#ffd23f', '#5ee06b', '#b57bff', '#ff9f43', '#2ee6d6', '#ff7ad9'];
 const CHARS = [
   { key: 'pizza', name: 'Pizza', col: '#f4b13e' },
   { key: 'burger', name: 'Burger', col: '#c1694f' },
@@ -67,6 +71,37 @@ const MAPS = [
   { name: 'Salad Bar', q: ['##########', '#S..ggg...', '#.c.ggg.#.', '#...c...#.', '#gg....gg.', '#gg..c.gg.'] },
   { name: 'Freezer', q: ['##########', '#S..iiii..', '#.##iiii#.', '#..iiiiii.', '#.ciiiii..', '#..iiii.c.'] },
   { name: 'Portal Pantry', q: ['##########', '#S...#....', '#.p..#..c.', '#....#....', '#.c.....##', '#.....c...'] },
+  // Big arenas (28x18) for 5-8 players. 'S' = corner spawn; extra spawns are placed automatically.
+  { name: 'Banquet Hall', big: true, q: [
+    '##############',
+    '#S...........',
+    '#..##....c....',
+    '#..#...c...##.',
+    '#......c...#..',
+    '#.c..##.......',
+    '#....#...ccc..',
+    '#..c.....c....',
+    '#.......c.....'].map(r => r.padEnd(14, '.')) },
+  { name: 'Farmers Market', big: true, q: [
+    '##############',
+    '#S...ggg......',
+    '#....ggg..c...',
+    '#.cc......##..',
+    '#....t....#...',
+    '#ggg...c......',
+    '#ggg....ggg.c.',
+    '#.....t.ggg...',
+    '#..c..........'] },
+  { name: 'Food Court', big: true, q: [
+    '##############',
+    '#S....#.......',
+    '#.p...#..c....',
+    '#.....#.......',
+    '#..c.....oo...',
+    '#........oo.c.',
+    '###..c........',
+    '#.......##....',
+    '#..c....#...c.'] },
 ];
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -85,31 +120,57 @@ const emit = (type, d) => { game.events.push([type, d === undefined ? 0 : d]); }
 const R0 = (v) => Math.round(v);
 
 function create() {
-  return {
+  return { cols: 20, rows: 12,
     grid: [], spawns: [], mapIndex: 0, players: [], rangs: [], pickups: [], trails: [], events: [],
     round: 0, phase: 'intro', phaseT: 0, timeScale: 1, slowT: 0, powerTimer: 0, time: 0, decoys: [],
     points: 5, mapSetting: -1, nextId: 1, over: false, opts: { mode: 'ffa', pull: true, pw: 1 },
   };
 }
-function use(g) { game = g; }
+function use(g) { game = g; if (g.cols) setDims(g.cols, g.rows); }
 
-function buildMap(idx) {
+// Builds the full arena by mirroring the quadrant both ways. `need` = number of spawn points wanted.
+function buildMap(idx, need) {
   const m = MAPS[idx], g = [], spawns = [];
+  const qw = m.q[0].length, qh = m.q.length;
+  setDims(qw * 2, qh * 2);
   for (let y = 0; y < ROWS; y++) {
     g.push([]);
     for (let x = 0; x < COLS; x++) {
-      const ch = m.q[y < 6 ? y : 11 - y][x < 10 ? x : 19 - x];
+      const ch = m.q[y < qh ? y : ROWS - 1 - y][x < qw ? x : COLS - 1 - x];
       let v = FLOOR;
       if (ch === '#') v = WALL; else if (ch === 'c') v = CRATE; else if (ch === 'o') v = PIT; else if (ch === 't') v = TREE;
       else if (ch === 'g') v = GRASS; else if (ch === 'i') v = ICE; else if (ch === 'p') v = PAD;
-      else if (ch === 'S') spawns.push({ x: x * TILE + TILE / 2, y: y * TILE + TILE / 2, q: (x < 10 ? 0 : 1) + (y < 6 ? 0 : 2) });
+      else if (ch === 'S') spawns.push({ x: x * TILE + TILE / 2, y: y * TILE + TILE / 2, q: (x < qw ? 0 : 1) + (y < qh ? 0 : 2) });
       g[y].push(v);
     }
   }
-  return { grid: g, spawns: [0, 3, 1, 2].map(q => spawns.find(s => s.q === q)) };
+  const out = [0, 3, 1, 2].map(q => spawns.find(s => s.q === q)); // TL, BR, TR, BL — a 1v1 starts in opposite corners
+  // More players than corners: add spawns on open floor as far as possible from everyone else
+  while (out.length < (need || 4)) {
+    let best = null, bestD = -1;
+    for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) {
+      if (g[y][x] !== FLOOR) continue;
+      let near = false; // keep away from pits and walls on all sides
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (g[y + dy][x + dx] === PIT) near = true;
+      if (near) continue;
+      const px = x * TILE + TILE / 2, py = y * TILE + TILE / 2;
+      const d = Math.min(...out.map(s => dist2(s.x, s.y, px, py)));
+      if (d > bestD) { bestD = d; best = { x: px, y: py }; }
+    }
+    if (!best) break;
+    out.push(best);
+  }
+  return { grid: g, spawns: out, cols: COLS, rows: ROWS };
+}
+// Arenas that suit a player count: big ones for crowds, regular ones for small games.
+function mapPool(n) {
+  const all = MAPS.map((m, i) => i);
+  if (n >= 7) return all.filter(i => MAPS[i].big);
+  if (n >= 5) return all;
+  return all.filter(i => !MAPS[i].big);
 }
 const gridToString = (g) => g.map(r => r.join('')).join('');
-const gridFromString = (s) => { const g = []; for (let y = 0; y < ROWS; y++) { g.push([]); for (let x = 0; x < COLS; x++) g[y].push(+s[y * COLS + x]); } return g; };
+const gridFromString = (s, cols, rows) => { const g = []; for (let y = 0; y < rows; y++) { g.push([]); for (let x = 0; x < cols; x++) g[y].push(+s[y * cols + x]); } return g; };
 
 const tileAt = (px, py) => {
   const x = Math.floor(px / TILE), y = Math.floor(py / TILE);
@@ -139,12 +200,14 @@ function newMatch(g, specs, points, mapSetting, opts) {
 
 function newRound() {
   game.round++;
-  const n = MAPS.length;
-  const idx = game.mapSetting >= 0 ? game.mapSetting
-    : game.round === 1 ? Math.floor(Math.random() * n)
-    : (game.mapIndex + 1 + Math.floor(Math.random() * (n - 1))) % n;
-  const m = buildMap(idx);
-  game.grid = m.grid; game.spawns = m.spawns; game.mapIndex = idx;
+  let idx = game.mapSetting;
+  if (idx < 0 || idx >= MAPS.length) { // random, never the same arena twice in a row
+    const pool = mapPool(game.players.length);
+    const choices = pool.length > 1 ? pool.filter(i => i !== game.mapIndex || game.round === 1) : pool;
+    idx = choices[Math.floor(Math.random() * choices.length)];
+  }
+  const m = buildMap(idx, game.players.length);
+  game.grid = m.grid; game.spawns = m.spawns; game.mapIndex = idx; game.cols = m.cols; game.rows = m.rows;
   game.rangs = []; game.pickups = []; game.trails = []; game.decoys = [];
   game.players.forEach((p, n) => {
     const s = game.spawns[n];
@@ -160,7 +223,7 @@ function newRound() {
     if (p.bot) Object.assign(p.bot, { think: 0.3 + Math.random() * 0.3, mode: 'idle', tap: 0, field: null, fieldKey: '', danger: null });
   });
   game.phase = 'intro'; game.phaseT = 1.3; game.powerTimer = 7; game.timeScale = 1; game.slowT = 0;
-  emit('round', { n: game.round, map: idx, grid: gridToString(game.grid) });
+  emit('round', { n: game.round, map: idx, grid: gridToString(game.grid), cols: COLS, rows: ROWS });
 }
 
 // ---------------------------------------------------------------- step
@@ -763,7 +826,15 @@ function updateBot(p, dt) {
         else if (los && td < 560 && Math.random() < D.aggro * 0.9) {
           b.mode = 'charge'; b.aimErr = rand(-D.err, D.err);
           b.chargeGoal = clamp((td - T.minRange + 40) / (T.maxRange - T.minRange), 0, 1) * T.fullCharge + rand(0, 0.06);
-        } else if (!los && b.noPathT > 0.6) { b.mode = 'charge'; b.aimErr = 0; b.chargeGoal = 0.15; b.noPathT = 0; }
+        } else if (!los && b.noPathT > 0.6) { // boxed in: smash the nearest box open
+          let best = null, bd = Infinity;
+          for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) if (game.grid[y][x] === CRATE) {
+            const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2, d = dist2(cx, cy, p.x, p.y);
+            if (d < bd) { bd = d; best = { x: cx, y: cy }; }
+          }
+          b.mode = 'charge'; b.aimErr = 0; b.noPathT = 0; b.crate = best;
+          b.chargeGoal = best ? clamp((Math.sqrt(bd) - T.minRange + 60) / (T.maxRange - T.minRange), 0, 1) * T.fullCharge : 0.15;
+        }
       }
     }
     if (goal) {
@@ -780,11 +851,12 @@ function updateBot(p, dt) {
   } else if (b.mode === 'charge') {
     if (!p.hasRang) b.mode = 'idle';
     else {
-      const lead = td / 650, ex = tgt.x + tgt.vx * lead, ey = tgt.y + tgt.vy * lead;
+      const lead = td / 650;
+      const ex = b.crate ? b.crate.x : tgt.x + tgt.vx * lead, ey = b.crate ? b.crate.y : tgt.y + tgt.vy * lead;
       const a = Math.atan2(ey - p.y, ex - p.x) + b.aimErr;
       inp.ax = Math.cos(a); inp.ay = Math.sin(a);
       if (p.charge < b.chargeGoal || !p.charging) inp.throw = true;
-      else { inp.throw = false; b.mode = 'idle'; b.think = D.react + rand(0, 0.3); }
+      else { inp.throw = false; b.mode = 'idle'; b.crate = null; b.think = D.react + rand(0, 0.3); }
     }
   }
   if (b.think <= 0) b.think = D.react;
@@ -824,9 +896,9 @@ function decodeInput(a) {
 }
 
 const Sim = {
-  TILE, COLS, ROWS, WW, WH, FLOOR, WALL, CRATE, PIT, TREE, GRASS, ICE, PAD, TEAM_COLORS, TEAM_NAMES, PLAYER_R, PCOLORS, CHARS, POWERS, POWER_KEYS, BOT_DIFF, MAPS, T, RSTATE,
+  TILE, MAX_PLAYERS, FLOOR, WALL, CRATE, PIT, TREE, GRASS, ICE, PAD, TEAM_COLORS, TEAM_NAMES, PLAYER_R, PCOLORS, CHARS, POWERS, POWER_KEYS, BOT_DIFF, MAPS, T, RSTATE,
   clamp, lerp, rand, dist2, angDiff, NO_INPUT, has, walkable,
-  create, use, buildMap, gridFromString, gridToString, newMatch, step, movePlayer, makeBot, tileAt,
+  create, use, buildMap, mapPool, setDims, dims: () => ({ cols: COLS, rows: ROWS, ww: WW, wh: WH }), gridFromString, gridToString, newMatch, step, movePlayer, makeBot, tileAt,
   encodeSnapshot, encodeSelf, encodeInput, decodeInput, bitsToPowers,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = Sim; else root.Sim = Sim;

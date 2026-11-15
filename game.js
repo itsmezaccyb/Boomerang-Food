@@ -1,8 +1,11 @@
 /* Boomerang Bites — client: rendering, input, sound, menus, and online netcode.
    Game rules live in sim.js (shared with the server). */
 'use strict';
-const { TILE, COLS, ROWS, WW, WH, FLOOR, WALL, CRATE, PIT, TREE, GRASS, ICE, PAD, TEAM_COLORS, TEAM_NAMES, PCOLORS, CHARS, POWERS, POWER_KEYS, MAPS, clamp, lerp, rand, dist2, angDiff } = Sim;
+const { TILE, FLOOR, WALL, CRATE, PIT, TREE, GRASS, ICE, PAD, TEAM_COLORS, TEAM_NAMES, PCOLORS, CHARS, POWERS, POWER_KEYS, MAPS, clamp, lerp, rand, dist2, angDiff } = Sim;
 
+// Arena size changes per map
+let COLS = 20, ROWS = 12, WW = COLS * TILE, WH = ROWS * TILE;
+function setDims(c, r) { COLS = c; ROWS = r; WW = c * TILE; WH = r * TILE; game.cols = c; game.rows = r; }
 const SLOT_TYPES = [
   { id: 'human', label: 'Player', sub: 'Touch / WASD' },
   { id: 'cpu1', label: 'CPU', sub: 'Easy' },
@@ -13,6 +16,10 @@ const SLOT_TYPES = [
   { id: 'pad1', label: 'Controller 2', sub: 'Gamepad' },
   { id: 'pad2', label: 'Controller 3', sub: 'Gamepad' },
   { id: 'pad3', label: 'Controller 4', sub: 'Gamepad' },
+  { id: 'pad4', label: 'Controller 5', sub: 'Gamepad' },
+  { id: 'pad5', label: 'Controller 6', sub: 'Gamepad' },
+  { id: 'pad6', label: 'Controller 7', sub: 'Gamepad' },
+  { id: 'pad7', label: 'Controller 8', sub: 'Gamepad' },
   { id: 'off', label: 'Off', sub: '' },
 ];
 const ONLINE_SLOT_LABEL = { open: ['Open', 'Waiting for a friend'], cpu1: ['CPU', 'Easy'], cpu2: ['CPU', 'Normal'], cpu3: ['CPU', 'Hard'], off: ['Off', ''] };
@@ -83,9 +90,11 @@ const Sound = {
 };
 
 // ---------------------------------------------------------------- settings
-const defaultSlots = [{ type: 'human', char: 0 }, { type: 'cpu2', char: 1 }, { type: 'cpu2', char: 2 }, { type: 'cpu2', char: 3 }];
+const defaultSlots = [{ type: 'human', char: 0 }, { type: 'cpu2', char: 1 }, { type: 'cpu2', char: 2 }, { type: 'cpu2', char: 3 },
+  { type: 'off', char: 4 }, { type: 'off', char: 5 }, { type: 'off', char: 6 }, { type: 'off', char: 7 }];
 const settings = Object.assign({ slots: defaultSlots, points: 5, map: -1, name: '', server: '', camera: 'follow', mode: 'ffa', pw: 1, pull: true }, store('bb_settings') || {});
-if (!Array.isArray(settings.slots) || settings.slots.length !== 4) settings.slots = defaultSlots;
+if (!Array.isArray(settings.slots)) settings.slots = defaultSlots;
+while (settings.slots.length < Sim.MAX_PLAYERS) settings.slots.push(Object.assign({}, defaultSlots[settings.slots.length])); // older saves had 4
 const saveSettings = () => store('bb_settings', settings);
 
 // ---------------------------------------------------------------- input
@@ -190,7 +199,8 @@ function handleEvent(type, d) {
   switch (type) {
     case 'round':
       game.mapIndex = d.map;
-      if (game.online) game.grid = Sim.gridFromString(d.grid);
+      setDims(d.cols || 20, d.rows || 12);
+      if (game.online) game.grid = Sim.gridFromString(d.grid, COLS, ROWS);
       vfx.parts = []; vfx.fx = []; vfx.rang.clear(); vfx.pick.clear();
       renderFloor();
       showBanner(`Round ${d.n}<small>${MAPS[d.map].name}</small>`, 1200);
@@ -755,14 +765,16 @@ function drawPlayer(p, T) {
 
 function drawScores() {
   if (!game.players.length) return;
-  const n = game.players.length, w = 64, gap = 6, total = n * w + (n - 1) * gap;
+  const n = game.players.length, gap = n > 4 ? 4 : 6;
+  const w = Math.min(64, Math.floor((Math.min(view.w - 120, 600) - (n - 1) * gap) / n)); // chips shrink to fit 8 players
+  const total = n * w + (n - 1) * gap;
   let x = view.w / 2 - total / 2; const y = view.safe.t + 6;
   for (const p of game.players) {
     ctx.fillStyle = 'rgba(20,12,40,0.6)'; roundRect(x, y, w, 30, 10); ctx.fill();
     ctx.fillStyle = p.color; roundRect(x, y + 26, w, 4, 2); ctx.fill();
-    ctx.globalAlpha = p.alive ? 1 : 0.35; ctx.drawImage(SPR[p.char.key], x + 5, y + 4, 22, 22); ctx.globalAlpha = 1;
-    ctx.fillStyle = '#fff'; ctx.font = '900 17px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(p.score, x + 44, y + 15);
+    ctx.globalAlpha = p.alive ? 1 : 0.35; ctx.drawImage(SPR[p.char.key], x + 4, y + 5, 20, 20); ctx.globalAlpha = 1;
+    ctx.fillStyle = '#fff'; ctx.font = '900 16px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(p.score, x + 24 + (w - 24) / 2, y + 15);
     if (p.score === game.points - 1) drawSpr(ctx, 'crown', x + w - 8, y + 2, 14, 0.3);
     x += w + gap;
   }
@@ -926,7 +938,7 @@ function renderLobby() {
 function onlineStatus(msg) { $('online-status').textContent = msg; }
 
 $('btn-map').onclick = () => { settings.map = settings.map + 1 >= MAPS.length ? -1 : settings.map + 1; saveSettings(); buildMenu(); };
-const MODE_LABEL = { ffa: 'Free-for-all', teams: 'Teams (2v2)' };
+const MODE_LABEL = { ffa: 'Free-for-all', teams: 'Teams' };
 const PW_LABEL = { 0: 'Off', 0.5: 'Few', 1: 'Normal', 2: 'Lots' };
 const PW_CYCLE = [1, 2, 0, 0.5];
 const nextPw = (v) => PW_CYCLE[(PW_CYCLE.indexOf(v) + 1) % PW_CYCLE.length];
@@ -1040,7 +1052,7 @@ resize();
 loadSprites().then(() => {
   show('loading', false); buildMenu();
   const m = Sim.buildMap(Math.floor(Math.random() * MAPS.length)); // backdrop behind the menu
-  game.grid = m.grid; renderFloor();
+  setDims(m.cols, m.rows); game.grid = m.grid; renderFloor();
   requestAnimationFrame(frame);
   // Deep link: ?join=ABCD opens the online screen with the code filled in
   const q = new URLSearchParams(location.search);

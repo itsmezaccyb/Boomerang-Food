@@ -112,9 +112,16 @@ Power-ups get rarer as people collect them: 20% fewer for each power-up anyone h
 | Teleporter pad | Step on it to warp to the pad on the opposite side | Portal Pantry |
 | Hot-sauce pit | Fall in and you're out. Dash over it | Picnic, Sauce Pit |
 
+### Players and arena sizes
+- **Up to 8 fighters**, in any mix of players and CPUs, locally or online. Locally: touch, two keyboard players, and up to 8 controllers.
+- Regular arenas are 20×12 tiles. **Big arenas are 28×18**: Banquet Hall, Farmers Market (lots of grass) and Food Court (teleporters and sauce pits).
+- **Random arena** picks by crowd size: up to 4 players get regular arenas, 5–6 get any arena, and 7–8 get big arenas. You can still choose any arena by hand.
+- Spawns: the 4 corners first, then extra spawns are placed automatically on open floor as far from everyone as possible.
+- Teams with more than 4 players: odd slots are Red, even slots are Blue (so 4v4).
+
 ### Modes and options
 - **Free-for-all**: last snack standing scores.
-- **Teams (2v2)**: Red (slots 1 and 3) vs Blue (slots 2 and 4). **No friendly fire**: boomerangs, slashes, fire and explosions don't hurt teammates (shoves still push them). The whole surviving team scores. Teammates in grass show faintly.
+- **Teams**: Red (slots 1, 3, 5, 7) vs Blue (slots 2, 4, 6, 8). **No friendly fire**: boomerangs, slashes, fire and explosions don't hurt teammates (shoves still push them). The whole surviving team scores. Teammates in grass show faintly.
 - **Power-ups**: Normal / Lots (2x) / Few (0.5x) / Off.
 - **Hold to call back**: on / off (off means you have to walk to a dropped boomerang).
 
@@ -123,7 +130,6 @@ Power-ups get rarer as people collect them: 20% fewer for each power-up anyone h
 - **Revive** in teams
 - **Lives per map**
 - **Turning individual power-ups on and off**
-- **Up to 6 players**
 - **Extra Boomerang**, **Battle Royale** and **Dash Through Walls** power-ups
 - **Sliding/crushing walls** and **moving platforms**
 - **Rain**

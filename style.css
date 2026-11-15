@@ -142,3 +142,9 @@ input:focus { border-color: var(--accent); }
 .join-info b { color: var(--ink); }
 body.tv .code { font-size: 72px; }
 body.tv .join-info { font-size: 18px; }
+
+/* Up to 8 fighters: two columns of slots when there's room */
+@media (min-width: 700px) {
+  #slots, #lobby-slots { display: grid; grid-template-columns: 1fr 1fr; column-gap: 12px; }
+  #slots .slot, #lobby-slots .slot { border-bottom: 1px solid var(--line); }
+}
