@@ -292,7 +292,7 @@ const net = {
   url() {
     let u = (settings.server || '').trim();
     if (!u) u = (window.BB_SERVER || '').trim();
-    if (!u && /^https?:$/.test(location.protocol) && !/github\.io$/.test(location.hostname)) u = location.origin;
+    if (!u && /^https?:$/.test(location.protocol) && !/(github\.io|vercel\.app|netlify\.app|pages\.dev)$/.test(location.hostname)) u = location.origin;
     if (!u) return '';
     if (!/^\w+:\/\//.test(u)) u = (/^(localhost|\d+\.\d+\.\d+\.\d+)(:|$)/.test(u) ? 'http://' : 'https://') + u;
     return u.replace(/^http/, 'ws').replace(/\/+$/, '') + '/ws';
