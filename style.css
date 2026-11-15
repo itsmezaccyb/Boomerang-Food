@@ -150,3 +150,24 @@ body.tv .join-info { font-size: 18px; }
 }
 
 .stand .kd { color: var(--muted); font-size: 12px; font-weight: 600; margin-right: 6px; }
+
+/* Between-round scoreboard */
+#scoreboard { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 4;
+  background: rgba(15, 10, 28, 0.45); animation: fadein 0.25s ease-out; }
+@keyframes fadein { from { opacity: 0; } }
+.sb-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; padding: 12px 16px; width: min(440px, 92vw);
+  max-height: 90vh; overflow: hidden; animation: pop2 0.35s ease-out; }
+.sb-panel h2 { margin: 0 0 8px; font-size: 18px; text-align: center; }
+.sb-row { display: grid; grid-template-columns: 26px 1fr 1.2fr 34px 30px; align-items: center; gap: 8px; padding: 3px 0; font-weight: 800; }
+.sb-row img { width: 24px; height: 24px; }
+.sb-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.sb-bar { height: 10px; border-radius: 6px; background: rgba(255,255,255,0.1); overflow: hidden; }
+.sb-bar i { display: block; height: 100%; border-radius: 6px; transition: width 0.9s ease-out; }
+.sb-delta { font-size: 13px; text-align: right; color: var(--muted); }
+.sb-delta.up { color: #7dffa1; animation: bump 0.4s ease-out 0.45s both; }
+@keyframes bump { from { transform: scale(1.8); opacity: 0; } }
+.sb-delta.down { color: #ff8a8a; }
+.sb-score { font-size: 20px; text-align: right; color: var(--accent); }
+#sb-sub { margin: 8px 0 0; text-align: center; color: var(--muted); font-size: 13px; }
+#sb-sub b { color: var(--ink); }
+@media (max-height: 420px) { .sb-row { padding: 1px 0; } .sb-panel { padding: 8px 14px; } .sb-panel h2 { font-size: 15px; margin-bottom: 4px; } }

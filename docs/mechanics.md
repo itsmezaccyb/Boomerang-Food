@@ -88,6 +88,7 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 - Knocking yourself out (walking into a pit) is **−1**, never below 0.
 - In Teams, teammates share points.
 - Kills to win: **5, 10 or 15** (default 10). The match ends the moment someone reaches it. A round ends when one snack or team is left, then a new round starts.
+- **Between rounds** a scoreboard pops up (3 s). Everyone's points tally up from where they started the round (bars slide, numbers count, and +N badges show what was earned), with the target and who survived. During play, small score chips sit at the top.
 - The results screen shows knockouts and times knocked out for everyone.
 
 ### Slash

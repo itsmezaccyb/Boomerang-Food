@@ -59,7 +59,7 @@ const T = {
   recallMax: 720, recallAccel: 1300, teleRadius: 380, teleSpeed: 520,
   slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
   trailLife: 2.2, trailGap: 24, freeze: 1.3, explodeR: 78,
-  firstCountdown: 4, countdown: 2.6, regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
+  firstCountdown: 4, countdown: 2.6, between: 3, regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
   curve: 2.6, holdToCall: 0.2, iceGrip: 2.2, bamboo: 5, disguiseAfter: 1.2, decoyLife: 5, padCd: 0.8, revealDist: 80,
 };
 // Quadrant maps (10x6), mirrored both ways into a fair 20x12 arena.
@@ -398,7 +398,7 @@ function endRound() {
   }
   const alive = game.players.filter(p => p.alive);
   emit('roundend', { scores, last: alive.length === 1 ? alive[0].i : -1 });
-  game.phase = 'between'; game.phaseT = 1.2;
+  game.phase = 'between'; game.phaseT = T.between; // time to show the scoreboard
 }
 
 // Movement + aiming only. Shared with client-side prediction, so it only touches the player itself.

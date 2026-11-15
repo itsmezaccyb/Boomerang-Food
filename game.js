@@ -220,6 +220,7 @@ function handleEvent(type, d) {
       { const built = Sim.buildMap(d.map); game.shapes = built.shapes; game.nav = built.nav; } // custom shapes are static per map
       if (game.online) game.grid = Sim.gridFromString(d.grid, COLS, ROWS);
       vfx.parts = []; vfx.fx = []; vfx.rang.clear(); vfx.pick.clear();
+      hideScoreboard(); game.roundStart = game.players.map(p => p.score || 0); game.roundNo = d.n;
       renderFloor();
       showBanner(`Round ${d.n}<small>${MAPS[d.map].name}</small>`, 1200);
       touch.move = touch.aim = null; touch.dash = false;
@@ -271,7 +272,7 @@ function handleEvent(type, d) {
       else if (q) vfx.fx.push({ type: 'text', x: d.x, y: d.y - 34, text: '-1', col: '#ff8a8a', t: 0, max: 1, big: true });
       break;
     }
-    case 'roundend': d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; }); showBanner('Next round', 900); break;
+    case 'roundend': d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; }); showScoreboard(d); break;
     case 'regen': Sound.catch(); vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.35, col: '#ffd27a' }); break;
     case 'score': {
       d.scores.forEach((s, n) => { if (game.players[n]) game.players[n].score = s; });
@@ -296,6 +297,43 @@ function handleEvent(type, d) {
   }
 }
 const playerLabel = (p) => (p.name ? p.name : p.char.name);
+
+// Between rounds: a scoreboard where everyone's points tally up from what they had at the start of the round.
+let sbTimer = 0;
+function showScoreboard(d) {
+  const before = game.roundStart || game.players.map(() => 0), target = game.points || 10;
+  const rows = game.players.map((p, n) => ({ p, from: before[n] || 0, to: p.score || 0 })).sort((a, b) => b.to - a.to || a.p.i - b.p.i);
+  const last = d && d.last >= 0 ? game.players.find(p => p.i === d.last) : null;
+  $('sb-title').textContent = `After round ${game.roundNo || 1}`;
+  $('sb-sub').innerHTML = `First to <b>${target}</b>` + (last ? ` · <span style="color:${last.color}">${esc(playerLabel(last))}</span> survived` : '');
+  const el = $('sb-rows'); el.innerHTML = '';
+  for (const r of rows) {
+    const diff = r.to - r.from, row = document.createElement('div');
+    row.className = 'sb-row';
+    row.innerHTML = `<img src="sprites/${r.p.char.key}.svg" alt=""><span class="sb-name" style="color:${r.p.color}">${esc(playerLabel(r.p))}</span>
+      <span class="sb-bar"><i style="width:${Math.min(100, r.from / target * 100)}%;background:${r.p.color}"></i></span>
+      <span class="sb-delta ${diff > 0 ? 'up' : diff < 0 ? 'down' : ''}">${diff > 0 ? '+' + diff : diff < 0 ? diff : ''}</span>
+      <span class="sb-score">${r.from}</span>`;
+    el.appendChild(row);
+    r.el = row;
+  }
+  show('scoreboard'); show('banner', false);
+  clearInterval(sbTimer);
+  setTimeout(() => { // bars slide, numbers count up
+    for (const r of rows) r.el.querySelector('.sb-bar i').style.width = Math.min(100, Math.max(0, r.to) / target * 100) + '%';
+    let step = 0;
+    sbTimer = setInterval(() => {
+      step++;
+      let done = true;
+      for (const r of rows) {
+        const shown = +r.el.querySelector('.sb-score').textContent;
+        if (shown !== r.to) { done = false; r.el.querySelector('.sb-score').textContent = shown + Math.sign(r.to - shown); if (r.to > shown) Sound.tick(); }
+      }
+      if (done || step > 30) clearInterval(sbTimer);
+    }, 180);
+  }, 450);
+}
+function hideScoreboard() { clearInterval(sbTimer); show('scoreboard', false); }
 
 function updateVfx(dt) {
   vfx.shake = Math.max(0, vfx.shake - dt * 30);
@@ -829,7 +867,7 @@ function drawPlayer(p, T) {
 }
 
 function drawScores() {
-  if (!game.players.length) return;
+  if (!game.players.length || !$('scoreboard').classList.contains('hidden')) return; // the scoreboard is showing
   const n = game.players.length, gap = n > 4 ? 4 : 6;
   const w = Math.min(64, Math.floor((Math.min(view.w - 120, 600) - (n - 1) * gap) / n)); // chips shrink to fit 8 players
   const total = n * w + (n - 1) * gap;
@@ -1057,6 +1095,7 @@ function togglePause() {
   else if (game.state === 'paused') { game.state = 'play'; show('pause', false); }
 }
 function toMenu() {
+  hideScoreboard();
   game = { state: 'menu', online: false, grid: game.grid, players: [], rangs: [], pickups: [], mapIndex: game.mapIndex, time: 0 };
   show('pause', false); show('result', false); show('btn-pause', false); show('banner', false); show('lobby', false); show('online', false);
   document.body.classList.remove('playing'); show('menu'); buildMenu();
@@ -1068,6 +1107,7 @@ function exitGameToLobby() {
 }
 function showResult(w, team) {
   if (!w) return;
+  hideScoreboard();
   game.state = 'result'; Sound.win(); show('btn-pause', false); show('banner', false); show('pause', false);
   if (team >= 0) { $('result-title').textContent = `${TEAM_NAMES[team]} team wins!`; $('result-title').style.color = TEAM_COLORS[team]; }
   else { $('result-title').textContent = `${playerLabel(w)} wins!`; $('result-title').style.color = w.color; }
