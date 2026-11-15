@@ -70,7 +70,7 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 2. **Walls, trees, boxes and custom shapes on the way out**: it **bounces off** at the proper angle, keeping 85% of its speed (boxes break). After 8 bounces (stuck rattling in a corner) it drops.
 3. **Return**: once out of range it flies straight back toward you. **Anything solid in the way stops it**: it gets stuck on the far side and drops there.
 4. **Pick up**: walk over a boomerang on the floor to grab it.
-5. **Call back**: with **both hands empty**, hold throw for a moment (0.2 s). It only works when the boomerang has a **clear line to you**. If a wall is between you, walk around it or go get it. After a blocked call-back it can't be called again for 1.2 s.
+5. **Call back**: with **both hands empty**, hold throw for a moment (0.2 s). It works **like gravity**: the boomerang is pulled toward you, **finds its way around walls and corners** and slides along surfaces, speeding up as it comes. It can't pass a wall that completely separates you. Let go early and it carries on as a normal return, which a wall can stop.
 6. It hits players **on the way out, on the way back, and when called back**. Your own boomerang never hurts you.
 
 ### Two hands, grey boomerangs
@@ -78,6 +78,10 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 - When a snack is knocked out, all their boomerangs (in hand or out in the arena) **turn grey and fall**. **Anyone with a free hand can grab one**, and it becomes theirs.
 - Your own boomerang that's lying around can only be picked up by you.
 - **Extra Boomerang** power-up: start every round holding two.
+
+### Countdown
+- **First round:** "Round 1", then **3, 2, 1, GO!** (4 s) so everyone can turn their phone sideways. In local games the countdown waits while the phone is still upright.
+- **Later rounds:** a shorter **2, 1, GO!**
 
 ### Scoring
 - **Every knockout is +1.** Shoving someone into a pit counts as your knockout (within 3 s of the shove).

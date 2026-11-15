@@ -96,6 +96,7 @@ const Sound = {
   fall() { this.tone(500, 0.5, 'sine', 0.15, 60); },
   win() { [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.18, 'triangle', 0.12, 0, i * 0.11)); },
   tick() { this.tone(700, 0.07, 'square', 0.06); },
+  go() { this.tone(1050, 0.18, 'square', 0.07); this.tone(1400, 0.2, 'triangle', 0.06, 0, 0.06); },
   shove() { this.noise(0.1, 0.25, 400, 'lowpass'); this.tone(160, 0.1, 'square', 0.08, 80); },
   drop() { this.tone(300, 0.08, 'triangle', 0.08, 180); },
   recall() { this.tone(400, 0.25, 'sine', 0.08, 900); },
@@ -224,7 +225,8 @@ function handleEvent(type, d) {
       touch.move = touch.aim = null; touch.dash = false;
       if (game.online) net.onRound();
       break;
-    case 'go': showBanner('GO!', 500); Sound.tick(); break;
+    case 'count': showBanner(String(d), 800); Sound.tick(); break;
+    case 'go': showBanner('GO!', 600); Sound.go(); break;
     case 'sfx': if (Sound[d]) Sound[d](); break;
     case 'dash':
       Sound.dash();
@@ -1102,7 +1104,9 @@ function frame(now) {
     updateVfx(dt);
   } else if (game.state === 'play') {
     acc += dt;
-    while (acc >= STEP) { localInputs(); Sim.step(game, STEP); acc -= STEP; }
+    // hold the countdown while the phone is still upright (the rotate screen is showing)
+    const waitForTurn = game.phase === 'intro' && document.body.classList.contains('portrait');
+    while (acc >= STEP) { if (!waitForTurn) { localInputs(); Sim.step(game, STEP); } acc -= STEP; }
     drainLocalEvents();
     updateVfx(dt * (game.timeScale || 1));
   }

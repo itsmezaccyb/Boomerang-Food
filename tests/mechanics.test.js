@@ -33,7 +33,7 @@ a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 700, y: 216, state: 'return
 run(g, 1.2, () => { a.input = I({}); }); r = own(g, a)[0];
 ok(a.ammo === 0 && r && r.state === 'dropped' && r.x > 528, 'returning boomerang gets stuck on the far side of a wall (x=' + (r && Math.round(r.x)) + ')');
 run(g, 1, () => { a.input = I({ throw: true }); });
-ok(own(g, a)[0].state === 'dropped', "calling it back doesn't work through a wall");
+ok(a.ammo === 0, "a call-back can't pass through a wall that fully separates you");
 a.x = 650; a.y = 300; b.x = 900; b.y = 560; run(g, 0.05, () => { a.input = I({}); }); // walk around (teleport for the test) into view
 // clear line now -> call-back works
 
@@ -124,6 +124,18 @@ ok(Math.abs(a.x - (17 * 48 + 24)) < 30, 'teleporter pads');
 g = setup(); [a] = g.players; a.powers = ['disguise']; a.input = I({}); run(g, 1.4); ok(a.disguised, 'disguise');
 g = setup(4, 2, { pull: false }); [a] = g.players; a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 860, y: 216 });
 a.x = 100; a.y = 216; run(g, 1, () => { a.input = I({ throw: true }); }); ok(a.ammo === 0, 'option: call-back off');
+
+// --- countdown
+g = Sim.create(); Sim.newMatch(g, [0, 1].map(i => ({ i, type: 'local', char: i })), 10, 4);
+let counts = []; for (let t = 0; t < 4.5; t += 1 / 120) { Sim.step(g, 1 / 120); for (const [k, d] of g.events) if (k === 'count' || k === 'go') counts.push(k === 'go' ? 'GO' : d); g.events = []; }
+ok(counts.join() === '3,2,1,GO', 'first round has a 3-2-1-GO countdown (' + counts.join() + ')');
+
+// --- gravity call-back around a wall
+g = setup(); [a, b] = g.players; b.x = 900; b.y = 560;
+for (let y = 0; y < 9; y++) g.grid[y][10] = 1; // wall from the top, gap at the bottom
+a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 700, y: 120 }); a.x = 300; a.y = 120;
+run(g, 3, () => { a.input = I({ throw: true }); });
+ok(a.ammo === 1, 'call-back finds its way around a wall (like gravity)');
 
 console.log(`\n${pass} passed, ${failN} failed`);
 process.exit(failN ? 1 : 0);

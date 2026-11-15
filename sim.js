@@ -59,7 +59,7 @@ const T = {
   recallMax: 720, recallAccel: 1300, teleRadius: 380, teleSpeed: 520,
   slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
   trailLife: 2.2, trailGap: 24, freeze: 1.3, explodeR: 78,
-  regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
+  firstCountdown: 4, countdown: 2.6, regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
   curve: 2.6, holdToCall: 0.2, iceGrip: 2.2, bamboo: 5, disguiseAfter: 1.2, decoyLife: 5, padCd: 0.8, revealDist: 80,
 };
 // Quadrant maps (10x6), mirrored both ways into a fair 20x12 arena.
@@ -344,7 +344,8 @@ function newRound() {
     p.aim = p.face;
     if (p.bot) Object.assign(p.bot, { think: 0.3 + Math.random() * 0.3, mode: 'idle', tap: 0, field: null, fieldKey: '', danger: null });
   });
-  game.phase = 'intro'; game.phaseT = 1.3; game.powerTimer = 7; game.timeScale = 1; game.slowT = 0;
+  // first round: a proper 3-2-1 so people can turn their phones sideways; later rounds a shorter one
+  game.phase = 'intro'; game.phaseT = game.round === 1 ? T.firstCountdown : T.countdown; game.lastCount = 0; game.powerTimer = 7; game.timeScale = 1; game.slowT = 0;
   emit('round', { n: game.round, map: idx, grid: gridToString(game.grid), cols: COLS, rows: ROWS });
 }
 
@@ -359,6 +360,8 @@ function step(g, dt) {
   if (g.phase === 'intro') {
     g.phaseT -= dt;
     for (const p of g.players) { p.prevThrow = p.input.throw; p.prevDash = p.input.dash; p.prevSlash = p.input.slash; }
+    const c = Math.ceil(g.phaseT);
+    if (c > 0 && c <= (g.round === 1 ? 3 : 2) && c !== g.lastCount) { g.lastCount = c; emit('count', c); } // 3-2-1 first round, 2-1 after
     if (g.phaseT <= 0) { g.phase = 'fight'; emit('go'); }
     return;
   }
@@ -673,13 +676,66 @@ function flyStep(r, dt) {
   return true;
 }
 
+// Flow field toward a tile for flying boomerangs (they fly over pits, not through walls or shapes).
+function rangField(gx, gy) {
+  const key = gx + ',' + gy;
+  game.flow = game.flow && game.flow.round === game.round && game.flow.gen === game.gridGen ? game.flow : { round: game.round, gen: game.gridGen, m: new Map() };
+  if (game.flow.m.has(key)) return game.flow.m.get(key);
+  const f = new Int16Array(COLS * ROWS).fill(-1), q = [];
+  const ok = (x, y) => x >= 0 && y >= 0 && x < COLS && y < ROWS && !solidT(game.grid[y][x]) && !(game.nav && game.nav.b[x + y * COLS]);
+  if (ok(gx, gy)) { f[gx + gy * COLS] = 0; q.push(gx + gy * COLS); }
+  for (let h = 0; h < q.length; h++) {
+    const c = q[h], cx = c % COLS, cy = (c / COLS) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = cx + dx, ny = cy + dy, n = nx + ny * COLS;
+      if (!ok(nx, ny) || f[n] >= 0 || !stepOk(cx, cy, nx, ny)) continue;
+      f[n] = f[c] + 1; q.push(n);
+    }
+  }
+  if (game.flow.m.size > 64) game.flow.m.clear();
+  game.flow.m.set(key, f);
+  return f;
+}
+// Next point to head for when the owner isn't in sight: the neighbouring tile that's closest (by flow) to them.
+function flowWaypoint(r, o) {
+  const f = rangField(Math.floor(o.x / TILE), Math.floor(o.y / TILE));
+  const cx = Math.floor(r.x / TILE), cy = Math.floor(r.y / TILE);
+  const here = cx >= 0 && cy >= 0 && cx < COLS && cy < ROWS ? f[cx + cy * COLS] : -1;
+  let best = null, bv = here >= 0 ? here : 9999;
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    const nx = cx + dx, ny = cy + dy;
+    if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
+    const v = f[nx + ny * COLS];
+    if (v < 0 || v >= bv) continue;
+    if (dx && dy && (f[nx + cy * COLS] < 0 || f[cx + ny * COLS] < 0 || !stepOk(cx, cy, nx, ny))) continue; // don't cut corners
+    if (!dx || !dy) { if (!stepOk(cx, cy, nx, ny)) continue; }
+    bv = v; best = { x: nx * TILE + TILE / 2, y: ny * TILE + TILE / 2 };
+  }
+  return best;
+}
+// Move a boomerang, sliding along walls and shapes instead of stopping dead.
+function slideStep(r, dt) {
+  const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt;
+  if (!solidAt(nx, ny) || solidAt(r.x, r.y)) { r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); return; }
+  const h = !solidT(tileAt(nx, ny)) && (shapeHit(nx, ny, 0) || shapeHit(nx, ny, 3));
+  if (h) { // shape: drop the part of the motion going into the surface
+    const dot = r.vx * h.nx + r.vy * h.ny;
+    if (dot < 0) { r.vx -= dot * h.nx; r.vy -= dot * h.ny; }
+    const sx = r.x + r.vx * dt, sy = r.y + r.vy * dt;
+    if (!solidAt(sx, sy)) { r.x = sx; r.y = sy; }
+    return;
+  }
+  if (!solidAt(nx, r.y)) { r.x = nx; r.vy *= 0.5; }      // slide along a horizontal edge
+  else if (!solidAt(r.x, ny)) { r.y = ny; r.vx *= 0.5; } // slide along a vertical edge
+}
+
 function updateRang(r, dt) {
   r.t += dt; r.stateT += dt;
   if (r.immuneT > 0) { r.immuneT -= dt; if (r.immuneT <= 0) r.immune = null; }
   const o = r.owner, ownerOk = o.alive && !o.falling && !r.neutral;
 
   if (r.state === 'dropped') {
-    if (ownerOk && o.recalling && !(r.recallBlockT > game.time) && (r.drill || lineClear(r.x, r.y, o.x, o.y))) { setState(r, 'recall'); r.speed = 150; emit('sfx', 'recall'); } // only with a clear line
+    if (ownerOk && o.recalling) { setState(r, 'recall'); r.speed = 150; emit('sfx', 'recall'); }
     else {
       // walk over it to pick it up: your own, or a grey one (its owner is out) if you have a free hand
       for (const p of game.players) {
@@ -717,24 +773,34 @@ function updateRang(r, dt) {
       if (r.boom) { explode(r, r.x, r.y); return; }
       setState(r, 'return'); r.speed = want;
     }
-  } else if (r.state === 'return' || r.state === 'recall') {
+  } else if (r.state === 'return') {
     // Straight back to the owner. Anything solid in the way stops it: it gets stuck on the far side. Deadly on the way.
-    const recall = r.state === 'recall';
     const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
-    r.speed = Math.min(r.speed + (recall ? T.recallAccel : 1000) * dt, recall ? T.recallMax : T.returnSpeed);
+    r.speed = Math.min(r.speed + 1000 * dt, T.returnSpeed);
     r.vx = dx / d * r.speed; r.vy = dy / d * r.speed;
-    const stepLen = r.speed * dt;
-    if (d <= stepLen + PLAYER_R + 10) { catchRang(o, r); return; }
+    if (d <= r.speed * dt + PLAYER_R + 10) { catchRang(o, r); return; }
     const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt;
     if (!r.drill && solidAt(nx, ny) && !solidAt(r.x, r.y)) {
       const tx = Math.floor(nx / TILE), ty = Math.floor(ny / TILE);
       if (game.grid[ty] && game.grid[ty][tx] === CRATE) breakCrate(tx, ty); // a box takes the hit
       emit('spark', { x: R0(r.x), y: R0(r.y), s: 1 });
-      dropRang(r); r.recallBlockT = game.time + 1.2; // can't be called again straight away (stops a call/stick loop)
-      return;
+      dropRang(r); return;
     }
     if (r.drill && tileAt(nx, ny) === CRATE) breakCrate(Math.floor(nx / TILE), Math.floor(ny / TILE));
     r.x = nx; r.y = ny;
+  } else if (r.state === 'recall') {
+    // Call-back works like gravity: it's pulled toward you and finds its way around walls and corners,
+    // sliding along surfaces. Deadly on the way.
+    const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
+    r.speed = Math.min(r.speed + T.recallAccel * dt, T.recallMax);
+    if (d <= r.speed * dt + PLAYER_R + 10) { catchRang(o, r); return; }
+    let tx = o.x, ty = o.y;
+    if (!r.drill && !lineClear(r.x, r.y, o.x, o.y)) { const w = flowWaypoint(r, o); if (w) { tx = w.x; ty = w.y; } }
+    const wx = tx - r.x, wy = ty - r.y, wd = Math.hypot(wx, wy) || 1;
+    const k = Math.min(1, dt * 9); // smooth pull, so it swings round corners instead of snapping
+    r.vx = lerp(r.vx, wx / wd * r.speed, k); r.vy = lerp(r.vy, wy / wd * r.speed, k);
+    if (r.drill) { r.x = clamp(r.x + r.vx * dt, 4, WW - 4); r.y = clamp(r.y + r.vy * dt, 4, WH - 4); if (tileAt(r.x, r.y) === CRATE) breakCrate(Math.floor(r.x / TILE), Math.floor(r.y / TILE)); }
+    else slideStep(r, dt);
   } else if (r.state === 'tele') {
     // Telekinesis: steer with the aim stick (or movement if none), within a radius of the owner.
     const inp = o.input; let sx = inp.ax, sy = inp.ay;
@@ -833,7 +899,7 @@ function explode(r, x, y) {
 
 function breakCrate(tx, ty) {
   if (game.grid[ty][tx] !== CRATE) return;
-  game.grid[ty][tx] = FLOOR;
+  game.grid[ty][tx] = FLOOR; game.gridGen = (game.gridGen || 0) + 1;
   emit('crate', { tx, ty });
   if (Math.random() < 0.4 * powerRate()) game.pickups.push({ id: game.nextId++, x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, type: randomPower(), t: 0 });
 }
@@ -1010,10 +1076,11 @@ function updateBot(p, dt) {
       else
       if (mine && mine.state === 'dropped') {
         const d = Math.hypot(mine.x - p.x, mine.y - p.y);
-        if (game.opts.pull && d > 120 && !(mine.recallBlockT > game.time) && !b.walkToRang && lineClear(p.x, p.y, mine.x, mine.y)) inp.throw = true; // summon it (needs a clear line)
+        if (game.opts.pull && d > 120 && !b.walkToRang) inp.throw = true; // summon it
         else goal = mine;
       } else if (mine && mine.state === 'recall') inp.throw = true;
-      if (mine && mine.recallBlockT > game.time) b.walkToRang = true;
+      b.recallT = mine && mine.state === 'recall' ? (b.recallT || 0) + dt : 0;
+      if (b.recallT > 3) b.walkToRang = true; // call-back isn't getting there: go and fetch it
       if (!mine || p.hasRang) b.walkToRang = false;
       else if (mine && has(p, 'tele') && mine.state !== 'dropped' && td < T.teleRadius + 40 && (b.steerT || 0) < 3 && lineClear(mine.x, mine.y, tgt.x, tgt.y)) { // steer it at the target
         inp.throw = true; inp.ax = tgt.x - mine.x; inp.ay = tgt.y - mine.y; b.steerT = (b.steerT || 0) + dt;
@@ -1059,6 +1126,7 @@ function updateBot(p, dt) {
       b.noPathT = ok ? 0 : b.noPathT + dt;
     }
   }
+  if (!p.hasRang) { const m = mainRang(p); if (m && m.state === 'recall') inp.throw = true; } // keep pulling while dodging
   if (tileAt(p.x + inp.mx * 22, p.y + inp.my * 22) === PIT && p.dashT <= 0) {
     const land = tileAt(p.x + inp.mx * 100, p.y + inp.my * 100);
     if (b.hop && p.dashCd <= 0 && walkable(land) && Math.hypot(inp.mx, inp.my) > 0.7) { inp.dash = true; b.hopping = true; }
