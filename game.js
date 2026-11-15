@@ -216,6 +216,7 @@ function handleEvent(type, d) {
     case 'round':
       game.mapIndex = d.map;
       setDims(d.cols || 20, d.rows || 12);
+      { const built = Sim.buildMap(d.map); game.shapes = built.shapes; game.nav = built.nav; } // custom shapes are static per map
       if (game.online) game.grid = Sim.gridFromString(d.grid, COLS, ROWS);
       vfx.parts = []; vfx.fx = []; vfx.rang.clear(); vfx.pick.clear();
       renderFloor();
@@ -551,6 +552,43 @@ function renderFloor() {
       g.fillStyle = '#9e1b12'; g.fillRect(px, py, TILE, TILE);
       if (!(y > 0 && game.grid[y - 1][x] === PIT)) { g.fillStyle = '#5c0d08'; g.fillRect(px, py, TILE, 10); }
     }
+  }
+  drawShapes(g);
+}
+
+// Custom collision shapes: drawn with their own art if the map gives one, otherwise as plain rounded blocks.
+const artCache = {};
+function artImage(src) {
+  if (!artCache[src]) { const img = new Image(); img.onload = () => renderFloor(); img.src = src; artCache[src] = img; }
+  return artCache[src].complete && artCache[src].naturalWidth ? artCache[src] : null;
+}
+function shapePath(g, sh) {
+  g.beginPath();
+  if (sh.type === 'circle') g.arc(sh.x, sh.y, sh.r, 0, Math.PI * 2);
+  else { g.moveTo(sh.points[0][0], sh.points[0][1]); for (const pt of sh.points.slice(1)) g.lineTo(pt[0], pt[1]); if (sh.type === 'poly') g.closePath(); }
+}
+function drawShapes(g) {
+  for (const sh of game.shapes || []) {
+    const art = sh.art && artImage(sh.art.src);
+    if (art) { // art box is in tile units; mirrored copies flip the image
+      const a = sh.art, w = a.w * TILE, h = a.h * TILE;
+      let x = a.x * TILE, y = a.y * TILE;
+      if (sh.fx) x = WW - x - w;
+      if (sh.fy) y = WH - y - h;
+      g.save(); g.translate(x + w / 2, y + h / 2); g.scale(sh.fx ? -1 : 1, sh.fy ? -1 : 1); g.drawImage(art, -w / 2, -h / 2, w, h); g.restore();
+      continue;
+    }
+    const col = sh.color || (sh.type === 'circle' ? '#b9773f' : '#a8553d');
+    g.lineCap = g.lineJoin = 'round';
+    g.save(); g.translate(4, 7); g.globalAlpha = 0.18; g.fillStyle = g.strokeStyle = '#3c1e0a'; // drop shadow
+    shapePath(g, sh); if (sh.type === 'path') { g.lineWidth = sh.w; g.stroke(); } else g.fill();
+    g.restore();
+    g.fillStyle = g.strokeStyle = col;
+    shapePath(g, sh); if (sh.type === 'path') { g.lineWidth = sh.w; g.stroke(); } else g.fill();
+    g.globalAlpha = 0.35; g.strokeStyle = '#fff'; g.lineWidth = sh.type === 'path' ? Math.max(2, sh.w * 0.25) : 3; // highlight
+    if (sh.type === 'path') { g.save(); g.translate(0, -sh.w * 0.18); shapePath(g, sh); g.stroke(); g.restore(); }
+    else { shapePath(g, sh); g.stroke(); }
+    g.globalAlpha = 1;
   }
 }
 
@@ -1077,7 +1115,7 @@ resize();
 loadSprites().then(() => {
   show('loading', false); buildMenu();
   const m = Sim.buildMap(Math.floor(Math.random() * MAPS.length)); // backdrop behind the menu
-  setDims(m.cols, m.rows); game.grid = m.grid; renderFloor();
+  setDims(m.cols, m.rows); game.grid = m.grid; game.shapes = m.shapes; game.nav = m.nav; renderFloor();
   requestAnimationFrame(frame);
   // Deep link: ?join=ABCD opens the online screen with the code filled in
   const q = new URLSearchParams(location.search);

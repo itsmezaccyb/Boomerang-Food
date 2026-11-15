@@ -59,7 +59,7 @@ const T = {
   recallMax: 720, recallAccel: 1300, teleRadius: 380, teleSpeed: 520,
   slashCd: 0.4, slashReach: 58, slashArc: 1.3, lunge: 260, shove: 520, rangR: 13,
   trailLife: 2.2, trailGap: 24, freeze: 1.3, explodeR: 78,
-  regen: 1.4, creditTime: 3,
+  regen: 1.4, creditTime: 3, bounceKeep: 0.85, maxBounces: 8,
   curve: 2.6, holdToCall: 0.2, iceGrip: 2.2, bamboo: 5, disguiseAfter: 1.2, decoyLife: 5, padCd: 0.8, revealDist: 80,
 };
 // Quadrant maps (10x6), mirrored both ways into a fair 20x12 arena.
@@ -74,6 +74,15 @@ const MAPS = [
   { name: 'Salad Bar', q: ['##########', '#S..ggg...', '#.c.ggg.#.', '#...c...#.', '#gg....gg.', '#gg..c.gg.'] },
   { name: 'Freezer', q: ['##########', '#S..iiii..', '#.##iiii#.', '#..iiiiii.', '#.ciiiii..', '#..iiii.c.'] },
   { name: 'Portal Pantry', q: ['##########', '#S...#....', '#.p..#..c.', '#....#....', '#.c.....##', '#.....c...'] },
+  // Custom collision shapes (see docs/custom-maps.md): curved walls, round tables, an odd-shaped island.
+  { name: 'Curvy Cafe', q: ['##########', '#S........', '#.........', '#.....c...', '#.........', '#.........'],
+    shapes: [
+      { type: 'arc', x: 1, y: 1, r: 4.2, from: 15, to: 75, width: 0.45 },             // curved wall around each corner
+      { type: 'circle', x: 6.5, y: 2.5, r: 0.75 },                                      // round tables
+      { type: 'arc', x: 10, y: 6, r: 2.4, from: 205, to: 335, width: 0.45, mirror: false }, // centre crescents
+      { type: 'arc', x: 10, y: 6, r: 2.4, from: 25, to: 155, width: 0.45, mirror: false },
+      { type: 'poly', points: [[2.6, 5], [4.2, 5.6], [4.2, 6.4], [2.6, 7]] },          // wedge islands left/right
+    ] },
   // Big arenas (28x18) for 5-8 players. 'S' = corner spawn; extra spawns are placed automatically.
   { name: 'Banquet Hall', big: true, q: [
     '##############',
@@ -147,12 +156,13 @@ function buildMap(idx, need) {
       g[y].push(v);
     }
   }
+  const shapes = buildShapes(m), nav = buildNav(shapes);
   const out = [0, 3, 1, 2].map(q => spawns.find(s => s.q === q)); // TL, BR, TR, BL — a 1v1 starts in opposite corners
   // More players than corners: add spawns on open floor as far as possible from everyone else
   while (out.length < (need || 4)) {
     let best = null, bestD = -1;
     for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) {
-      if (g[y][x] !== FLOOR) continue;
+      if (g[y][x] !== FLOOR || nav.b[x + y * COLS]) continue;
       let near = false; // keep away from pits and walls on all sides
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (g[y + dy][x + dx] === PIT) near = true;
       if (near) continue;
@@ -163,7 +173,7 @@ function buildMap(idx, need) {
     if (!best) break;
     out.push(best);
   }
-  return { grid: g, spawns: out, cols: COLS, rows: ROWS };
+  return { grid: g, spawns: out, cols: COLS, rows: ROWS, shapes, nav };
 }
 // Arenas that suit a player count: big ones for crowds, regular ones for small games.
 function mapPool(n) {
@@ -175,13 +185,121 @@ function mapPool(n) {
 const gridToString = (g) => g.map(r => r.join('')).join('');
 const gridFromString = (s, cols, rows) => { const g = []; for (let y = 0; y < rows; y++) { g.push([]); for (let x = 0; x < cols; x++) g[y].push(+s[y * cols + x]); } return g; };
 
+// ---------------------------------------------------------------- custom collision shapes
+// Maps can add solid shapes on top of the tile grid, in tile units (so they line up with custom art):
+//   { type: 'circle', x, y, r }                      round table / pillar
+//   { type: 'poly', points: [[x, y], ...] }          any outline (concave is fine)
+//   { type: 'path', points: [[x, y], ...], width }   thick line through points (walls of any route)
+//   { type: 'arc', x, y, r, from, to, width }        curved wall (degrees, 0 = right, 90 = down)
+// Optional: mirror: false (default true copies it into all four quadrants like the tiles),
+//           art: { src, x, y, w, h } image drawn for it (tile units), color: fill colour if no art.
+function buildShapes(m) {
+  const out = [], seen = new Set();
+  for (const s0 of m.shapes || []) {
+    let base = s0;
+    if (s0.type === 'arc') {
+      const n = Math.max(6, Math.ceil(Math.abs(s0.to - s0.from) / 8)), pts = [];
+      for (let i = 0; i <= n; i++) { const a = (s0.from + (s0.to - s0.from) * i / n) * Math.PI / 180; pts.push([s0.x + Math.cos(a) * s0.r, s0.y + Math.sin(a) * s0.r]); }
+      base = Object.assign({}, s0, { type: 'path', points: pts });
+    }
+    const variants = s0.mirror === false ? [[false, false]] : [[false, false], [true, false], [false, true], [true, true]];
+    for (const [fx, fy] of variants) {
+      const X = (v) => (fx ? COLS - v : v) * TILE, Y = (v) => (fy ? ROWS - v : v) * TILE;
+      const sh = { type: base.type, color: s0.color, art: s0.art, fx, fy };
+      if (base.type === 'circle') { sh.x = X(base.x); sh.y = Y(base.y); sh.r = base.r * TILE; }
+      else { sh.points = base.points.map(([x, y]) => [X(x), Y(y)]); sh.w = (base.width || 0.5) * TILE; }
+      const key = JSON.stringify([sh.type, sh.x, sh.y, sh.r, sh.points && sh.points.map(p => p.map(Math.round)).sort()]);
+      if (seen.has(key)) continue; // a shape on a mirror line would otherwise be duplicated
+      seen.add(key);
+      const pad = sh.type === 'path' ? sh.w / 2 : 0;
+      if (sh.type === 'circle') sh.box = [sh.x - sh.r, sh.y - sh.r, sh.x + sh.r, sh.y + sh.r];
+      else {
+        const xs = sh.points.map(p => p[0]), ys = sh.points.map(p => p[1]);
+        sh.box = [Math.min(...xs) - pad, Math.min(...ys) - pad, Math.max(...xs) + pad, Math.max(...ys) + pad];
+      }
+      out.push(sh);
+    }
+  }
+  return out;
+}
+function segClosest(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
+  const t = l ? clamp(((px - ax) * dx + (py - ay) * dy) / l, 0, 1) : 0;
+  return [ax + dx * t, ay + dy * t];
+}
+function pointInPoly(x, y, pts) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+// Does a circle (x, y, rad) overlap any shape? Returns the push-out normal and depth of the deepest overlap.
+function shapeHit(x, y, rad, shapes) {
+  shapes = shapes || (game && game.shapes);
+  if (!shapes || !shapes.length) return null;
+  let best = null;
+  for (const s of shapes) {
+    if (x + rad < s.box[0] || x - rad > s.box[2] || y + rad < s.box[1] || y - rad > s.box[3]) continue;
+    let nx = 1, ny = 0, depth;
+    if (s.type === 'circle') {
+      const dx = x - s.x, dy = y - s.y, d = Math.hypot(dx, dy);
+      depth = s.r + rad - d; if (depth <= 0) continue;
+      if (d) { nx = dx / d; ny = dy / d; }
+    } else {
+      let bd = Infinity, q = null;
+      const n = s.points.length, closed = s.type === 'poly';
+      for (let i = 0; i < (closed ? n : n - 1); i++) {
+        const a = s.points[i], b = s.points[(i + 1) % n], c = segClosest(x, y, a[0], a[1], b[0], b[1]);
+        const d = dist2(x, y, c[0], c[1]); if (d < bd) { bd = d; q = c; }
+      }
+      const d = Math.sqrt(bd);
+      if (s.type === 'path') {
+        depth = s.w / 2 + rad - d; if (depth <= 0) continue;
+        if (d) { nx = (x - q[0]) / d; ny = (y - q[1]) / d; }
+      } else if (pointInPoly(x, y, s.points)) {
+        depth = d + rad; if (d) { nx = (q[0] - x) / d; ny = (q[1] - y) / d; }
+      } else {
+        depth = rad - d; if (depth <= 0) continue;
+        if (d) { nx = (x - q[0]) / d; ny = (y - q[1]) / d; }
+      }
+    }
+    if (!best || depth > best.depth) best = { nx, ny, depth };
+  }
+  return best;
+}
+// Navigation around shapes for bots/spawns: b = tile centre covered by a shape,
+// r / d = can't walk from this tile to the one on the right / below (a shape is in the way).
+function buildNav(shapes) {
+  const n = COLS * ROWS, nav = { b: new Uint8Array(n), r: new Uint8Array(n), d: new Uint8Array(n) };
+  if (!shapes.length) return nav;
+  const clear = (ax, ay, bx, by) => { for (let t = 0; t <= 1.001; t += 0.125) if (shapeHit(lerp(ax, bx, t), lerp(ay, by, t), PLAYER_R * 0.75, shapes)) return false; return true; };
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const cx = x * TILE + TILE / 2, cy = y * TILE + TILE / 2, i = x + y * COLS;
+    if (shapeHit(cx, cy, 6, shapes)) nav.b[i] = 1;
+    if (x + 1 < COLS && !clear(cx, cy, cx + TILE, cy)) nav.r[i] = 1;
+    if (y + 1 < ROWS && !clear(cx, cy, cx, cy + TILE)) nav.d[i] = 1;
+  }
+  return nav;
+}
+// Can a fighter step between two neighbouring tiles (straight or diagonal) without a shape in the way?
+function stepOk(cx, cy, nx, ny) {
+  const nav = game.nav; if (!nav) return true;
+  const e = (ax, ay, bx, by) => bx > ax ? !nav.r[ax + ay * COLS] : bx < ax ? !nav.r[bx + by * COLS] : by > ay ? !nav.d[ax + ay * COLS] : !nav.d[bx + by * COLS];
+  if (nx !== cx && ny !== cy) return e(cx, cy, nx, cy) && e(nx, cy, nx, ny) && e(cx, cy, cx, ny) && e(cx, ny, nx, ny);
+  return e(cx, cy, nx, ny);
+}
+
 const tileAt = (px, py) => {
   const x = Math.floor(px / TILE), y = Math.floor(py / TILE);
   if (x < 0 || y < 0 || x >= COLS || y >= ROWS) return WALL;
   return game.grid[y][x];
 };
 const solidT = (v) => v === WALL || v === CRATE || v === TREE;
-const solidAt = (px, py) => solidT(tileAt(px, py));
+const solidAt = (px, py) => solidT(tileAt(px, py)) || !!shapeHit(px, py, 0);
+// walkable tile that no custom shape covers (for pathing, spawning, resting places)
+const openTile = (tx, ty) => tx >= 0 && ty >= 0 && tx < COLS && ty < ROWS && walkable(game.grid[ty][tx]) && !(game.nav && game.nav.b[tx + ty * COLS]);
 
 function makeBot(type) {
   return { diff: BOT_DIFF[type] || BOT_DIFF.cpu2, think: 0, mode: 'idle', aimErr: 0, chargeGoal: 0, tap: 0, field: null, fieldKey: '', fieldAge: 0, strafe: 1, strafeT: 0, noPathT: 0, danger: null };
@@ -210,7 +328,7 @@ function newRound() {
     idx = choices[Math.floor(Math.random() * choices.length)];
   }
   const m = buildMap(idx, game.players.length);
-  game.grid = m.grid; game.spawns = m.spawns; game.mapIndex = idx; game.cols = m.cols; game.rows = m.rows;
+  game.grid = m.grid; game.spawns = m.spawns; game.mapIndex = idx; game.cols = m.cols; game.rows = m.rows; game.shapes = m.shapes; game.nav = m.nav;
   game.rangs = []; game.pickups = []; game.trails = []; game.decoys = [];
   game.players.forEach((p, n) => {
     const s = game.spawns[n];
@@ -411,6 +529,7 @@ function moveCircle(e, dx, dy, r) {
   for (let s = 0; s < steps; s++) {
     e.x += dx / steps; resolve(e, r, 'x');
     e.y += dy / steps; resolve(e, r, 'y');
+    for (let k = 0; k < 3; k++) { const h = shapeHit(e.x, e.y, r); if (!h) break; e.x += h.nx * h.depth; e.y += h.ny * h.depth; }
   }
 }
 function resolve(e, r, axis) {
@@ -510,7 +629,7 @@ function nearestOpen(x, y) {
   let best = null, bd = Infinity;
   for (let rad = 1; rad < Math.max(COLS, ROWS) && !best; rad++) {
     for (let ty = sy - rad; ty <= sy + rad; ty++) for (let tx = sx - rad; tx <= sx + rad; tx++) {
-      if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS || !walkable(game.grid[ty][tx])) continue;
+      if (!openTile(tx, ty)) continue;
       const cx = tx * TILE + TILE / 2, cy = ty * TILE + TILE / 2, d = dist2(cx, cy, x, y);
       if (d < bd) { bd = d; best = { x: cx, y: cy }; }
     }
@@ -520,25 +639,37 @@ function nearestOpen(x, y) {
 // It falls to the floor and stays there until someone picks it up (or the owner calls it back)
 function dropRang(r) {
   if (r.temp) { removeRang(r); return; }
-  if (!walkable(tileAt(r.x, r.y))) { const o = nearestOpen(r.x, r.y); r.x = o.x; r.y = o.y; } // never rest inside a wall or on a pit
+  if (!walkable(tileAt(r.x, r.y)) || solidAt(r.x, r.y)) { const o = nearestOpen(r.x, r.y); r.x = o.x; r.y = o.y; } // never rest inside a wall, a shape or on a pit
   r.state = 'dropped'; r.vx = r.vy = 0; r.stateT = 0;
   emit('drop', { x: R0(r.x), y: R0(r.y) });
 }
 function setState(r, s) { if (r.state !== s) { r.state = s; r.stateT = 0; } }
 
-// Outbound/steered flight. Returns true if it hit something solid (it doesn't move into it).
+// Outbound/steered flight: bounces off walls, boxes, trees and custom shapes. Returns true if it bounced.
 function flyStep(r, dt) {
   const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt;
   const move = () => { r.x = clamp(nx, 4, WW - 4); r.y = clamp(ny, 4, WH - 4); };
-  if (!r.drill && solidAt(r.x, r.y)) { move(); return false; } // let go over a wall during a call-back: drift out first
   if (r.drill) { // drills straight through everything, breaking boxes
     if (tileAt(nx, ny) === CRATE) breakCrate(Math.floor(nx / TILE), Math.floor(ny / TILE));
     move(); return false;
   }
+  if (solidAt(r.x, r.y)) { move(); return false; } // somehow inside one: drift out
   if (!solidAt(nx, ny)) { move(); return false; }
   const tx = Math.floor(nx / TILE), ty = Math.floor(ny / TILE);
   if (game.grid[ty] && game.grid[ty][tx] === CRATE) breakCrate(tx, ty);
-  if (r.boom) explode(r, nx, ny);
+  if (r.boom) { explode(r, nx, ny); return true; }
+  const h = !solidT(tileAt(nx, ny)) && (shapeHit(nx, ny, 0) || shapeHit(nx, ny, 3));
+  if (h) { // custom shape: reflect off its surface
+    const dot = r.vx * h.nx + r.vy * h.ny;
+    if (dot < 0) { r.vx -= 2 * dot * h.nx; r.vy -= 2 * dot * h.ny; } else { r.vx = -r.vx; r.vy = -r.vy; }
+  } else { // tile: flip the axis that hit
+    const hx = solidAt(nx, r.y), hy = solidAt(r.x, ny);
+    if (hx) r.vx = -r.vx;
+    if (hy) r.vy = -r.vy;
+    if (!hx && !hy) { r.vx = -r.vx; r.vy = -r.vy; } // corner
+  }
+  r.vx *= T.bounceKeep; r.vy *= T.bounceKeep; r.speed *= T.bounceKeep; r.bounces = (r.bounces || 0) + 1;
+  emit('spark', { x: R0(r.x), y: R0(r.y), s: 1 });
   return true;
 }
 
@@ -548,7 +679,7 @@ function updateRang(r, dt) {
   const o = r.owner, ownerOk = o.alive && !o.falling && !r.neutral;
 
   if (r.state === 'dropped') {
-    if (ownerOk && o.recalling) { setState(r, 'recall'); r.speed = 150; emit('sfx', 'recall'); }
+    if (ownerOk && o.recalling && !(r.recallBlockT > game.time) && (r.drill || lineClear(r.x, r.y, o.x, o.y))) { setState(r, 'recall'); r.speed = 150; emit('sfx', 'recall'); } // only with a clear line
     else {
       // walk over it to pick it up: your own, or a grey one (its owner is out) if you have a free hand
       for (const p of game.players) {
@@ -577,9 +708,9 @@ function updateRang(r, dt) {
       ang += clamp(d, -maxTurn, maxTurn);
     }
     r.vx = Math.cos(ang) * want; r.vy = Math.sin(ang) * want;
-    if (flyStep(r, dt)) { // hit a wall/box/tree: it sticks there
-      if (game.rangs.includes(r)) { emit('spark', { x: R0(r.x), y: R0(r.y), s: 1 }); dropRang(r); }
-      return;
+    if (flyStep(r, dt)) { // bounced off something
+      if (!game.rangs.includes(r)) return;
+      if (r.bounces >= T.maxBounces) { dropRang(r); return; } // rattling around a corner: give up
     }
     r.traveled += want * dt;
     if (r.traveled >= r.maxDist) {
@@ -587,14 +718,23 @@ function updateRang(r, dt) {
       setState(r, 'return'); r.speed = want;
     }
   } else if (r.state === 'return' || r.state === 'recall') {
-    // Straight back to the owner, through walls and boxes, like it's being pulled. Deadly on the way.
+    // Straight back to the owner. Anything solid in the way stops it: it gets stuck on the far side. Deadly on the way.
     const recall = r.state === 'recall';
     const dx = o.x - r.x, dy = o.y - r.y, d = Math.hypot(dx, dy) || 1;
     r.speed = Math.min(r.speed + (recall ? T.recallAccel : 1000) * dt, recall ? T.recallMax : T.returnSpeed);
     r.vx = dx / d * r.speed; r.vy = dy / d * r.speed;
     const stepLen = r.speed * dt;
     if (d <= stepLen + PLAYER_R + 10) { catchRang(o, r); return; }
-    r.x += r.vx * dt; r.y += r.vy * dt;
+    const nx = r.x + r.vx * dt, ny = r.y + r.vy * dt;
+    if (!r.drill && solidAt(nx, ny) && !solidAt(r.x, r.y)) {
+      const tx = Math.floor(nx / TILE), ty = Math.floor(ny / TILE);
+      if (game.grid[ty] && game.grid[ty][tx] === CRATE) breakCrate(tx, ty); // a box takes the hit
+      emit('spark', { x: R0(r.x), y: R0(r.y), s: 1 });
+      dropRang(r); r.recallBlockT = game.time + 1.2; // can't be called again straight away (stops a call/stick loop)
+      return;
+    }
+    if (r.drill && tileAt(nx, ny) === CRATE) breakCrate(Math.floor(nx / TILE), Math.floor(ny / TILE));
+    r.x = nx; r.y = ny;
   } else if (r.state === 'tele') {
     // Telekinesis: steer with the aim stick (or movement if none), within a radius of the owner.
     const inp = o.input; let sx = inp.ax, sy = inp.ay;
@@ -605,7 +745,7 @@ function updateRang(r, dt) {
     const ox = r.x - o.x, oy = r.y - o.y, od = Math.hypot(ox, oy);
     if (od > T.teleRadius) { r.vx -= ox / od * 900 * dt; r.vy -= oy / od * 900 * dt; }
     r.speed = Math.hypot(r.vx, r.vy);
-    if (flyStep(r, dt)) { if (game.rangs.includes(r)) dropRang(r); return; }
+    flyStep(r, dt); // steered boomerangs bounce too
   }
   if (!game.rangs.includes(r)) return;
 
@@ -614,7 +754,7 @@ function updateRang(r, dt) {
     r.trailD += Math.hypot(r.vx, r.vy) * dt;
     if (r.trailD > T.trailGap) {
       r.trailD = 0;
-      if (walkable(tileAt(r.x, r.y))) game.trails.push({ id: game.nextId++, x: r.x, y: r.y, t: 0, k: r.fire ? 'fire' : 'ice', owner: o });
+      if (walkable(tileAt(r.x, r.y)) && !solidAt(r.x, r.y)) game.trails.push({ id: game.nextId++, x: r.x, y: r.y, t: 0, k: r.fire ? 'fire' : 'ice', owner: o });
       if (game.trails.length > 180) game.trails.shift();
     }
   }
@@ -759,7 +899,7 @@ function updatePickups(dt) {
   for (let tries = 0; tries < 40; tries++) {
     const tx = 1 + Math.floor(Math.random() * (COLS - 2)), ty = 1 + Math.floor(Math.random() * (ROWS - 2));
     const cx = tx * TILE + TILE / 2, cy = ty * TILE + TILE / 2;
-    if (game.grid[ty][tx] !== FLOOR || game.players.some(p => p.alive && dist2(p.x, p.y, cx, cy) < 90 * 90)) continue;
+    if (game.grid[ty][tx] !== FLOOR || !openTile(tx, ty) || game.players.some(p => p.alive && dist2(p.x, p.y, cx, cy) < 90 * 90)) continue;
     game.pickups.push({ id: game.nextId++, x: cx, y: cy, type: randomPower(), t: 0 });
     emit('ring', { x: cx, y: cy });
     break;
@@ -786,8 +926,8 @@ function distField(gx, gy) {
       const v = game.grid[ny][nx];
       // a 1-tile-wide pit with floor on both sides is crossable with a dash
       const hop = v === PIT && cx + 2 * dx >= 0 && cx + 2 * dx < COLS && cy + 2 * dy >= 0 && cy + 2 * dy < ROWS &&
-        walkable(game.grid[cy + 2 * dy][cx + 2 * dx]) && walkable(game.grid[cy][cx]);
-      if (!walkable(v) && !hop) continue;
+        openTile(cx + 2 * dx, cy + 2 * dy) && walkable(game.grid[cy][cx]);
+      if ((!openTile(nx, ny) && !hop) || !stepOk(cx, cy, nx, ny)) continue;
       f[n] = f[c] + (hop ? 3 : 1); q.push(n);
     }
   }
@@ -803,7 +943,8 @@ function pathDir(p, b, gx, gy) {
   for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
     const nx = cx + dx, ny = cy + dy;
     if (nx < 0 || ny < 0 || nx >= COLS || ny >= ROWS) continue;
-    if (dx && dy && (!walkable(game.grid[cy][nx]) || !walkable(game.grid[ny][cx]) || game.grid[ny][nx] === PIT)) continue;
+    if (dx && dy && (!openTile(nx, cy) || !openTile(cx, ny) || game.grid[ny][nx] === PIT)) continue;
+    if (!stepOk(cx, cy, nx, ny)) continue;
     const v = f[nx + ny * COLS];
     if (v >= 0 && v < bv) { bv = v; best = [nx, ny]; }
   }
@@ -869,9 +1010,11 @@ function updateBot(p, dt) {
       else
       if (mine && mine.state === 'dropped') {
         const d = Math.hypot(mine.x - p.x, mine.y - p.y);
-        if (game.opts.pull && (d > 160 || !lineClear(p.x, p.y, mine.x, mine.y))) inp.throw = true; // summon it
+        if (game.opts.pull && d > 120 && !(mine.recallBlockT > game.time) && !b.walkToRang && lineClear(p.x, p.y, mine.x, mine.y)) inp.throw = true; // summon it (needs a clear line)
         else goal = mine;
       } else if (mine && mine.state === 'recall') inp.throw = true;
+      if (mine && mine.recallBlockT > game.time) b.walkToRang = true;
+      if (!mine || p.hasRang) b.walkToRang = false;
       else if (mine && has(p, 'tele') && mine.state !== 'dropped' && td < T.teleRadius + 40 && (b.steerT || 0) < 3 && lineClear(mine.x, mine.y, tgt.x, tgt.y)) { // steer it at the target
         inp.throw = true; inp.ax = tgt.x - mine.x; inp.ay = tgt.y - mine.y; b.steerT = (b.steerT || 0) + dt;
       }
@@ -938,6 +1081,23 @@ function updateBot(p, dt) {
       else { inp.throw = false; b.mode = 'idle'; b.crate = null; b.think = D.react + rand(0, 0.3); }
     }
   }
+  // Unstick: pushing for 1.5s without getting anywhere (odd wall shapes) -> walk to a random nearby open spot for a moment
+  if (Math.hypot(inp.mx, inp.my) > 0.5 && !b.danger) {
+    if (!b.lastPos || Math.hypot(p.x - b.lastPos.x, p.y - b.lastPos.y) > 12) { b.lastPos = { x: p.x, y: p.y }; b.stuckT = 0; }
+    else b.stuckT = (b.stuckT || 0) + dt;
+    if (b.stuckT > 1.5 && !b.unstick) {
+      const tx = Math.floor(p.x / TILE), ty = Math.floor(p.y / TILE), opts = [];
+      for (let y = ty - 3; y <= ty + 3; y++) for (let x = tx - 3; x <= tx + 3; x++) if (openTile(x, y) && (x !== tx || y !== ty)) opts.push({ x: x * TILE + TILE / 2, y: y * TILE + TILE / 2 });
+      if (opts.length) b.unstick = Object.assign(opts[Math.floor(Math.random() * opts.length)], { t: 1 });
+      b.stuckT = 0;
+    }
+  } else b.stuckT = 0;
+  if (b.unstick) {
+    b.unstick.t -= dt;
+    const dx = b.unstick.x - p.x, dy = b.unstick.y - p.y, d = Math.hypot(dx, dy) || 1;
+    inp.mx = dx / d; inp.my = dy / d;
+    if (b.unstick.t <= 0 || d < 10) b.unstick = null;
+  }
   if (b.think <= 0) b.think = D.react;
   p.input = inp;
 }
@@ -977,7 +1137,7 @@ function decodeInput(a) {
 const Sim = {
   TILE, MAX_PLAYERS, FLOOR, WALL, CRATE, PIT, TREE, GRASS, ICE, PAD, TEAM_COLORS, TEAM_NAMES, PLAYER_R, PCOLORS, CHARS, POWERS, POWER_KEYS, BOT_DIFF, MAPS, T, RSTATE,
   clamp, lerp, rand, dist2, angDiff, NO_INPUT, has, walkable,
-  create, use, buildMap, mapPool, setDims, dims: () => ({ cols: COLS, rows: ROWS, ww: WW, wh: WH }), gridFromString, gridToString, newMatch, step, movePlayer, makeBot, tileAt,
+  create, use, buildMap, shapeHit, mapPool, setDims, dims: () => ({ cols: COLS, rows: ROWS, ww: WW, wh: WH }), gridFromString, gridToString, newMatch, step, movePlayer, makeBot, tileAt,
   encodeSnapshot, encodeSelf, encodeInput, decodeInput, bitsToPowers,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = Sim; else root.Sim = Sim;

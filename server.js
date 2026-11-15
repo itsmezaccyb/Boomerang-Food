@@ -28,7 +28,7 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ok: true, rooms: rooms.size, players: wss.clients.size }));
   }
   let rel = decodeURIComponent(url.pathname).replace(/^\/+/, '') || 'index.html';
-  const ok = PUBLIC.has(rel) || /^(sprites|icons)\/[\w.-]+$/.test(rel);
+  const ok = PUBLIC.has(rel) || /^(sprites|icons)\/[\w.-]+$/.test(rel) || /^art\/[\w\/.-]+\.(png|svg|jpg|webp)$/.test(rel);
   const file = path.join(ROOT, rel);
   if (!ok || !file.startsWith(ROOT)) { res.writeHead(404); return res.end('not found'); }
   fs.readFile(file, (err, data) => {

@@ -67,10 +67,10 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 
 ### Boomerang flight
 1. **Out**: flies in the aimed direction, slowing down, up to a range set by the charge (about 3.5 to 10.5 tiles).
-2. **Hits a wall, tree or box on the way out**: it **sticks there** and drops to the floor (boxes break).
-3. **Return**: once out of range it flies **straight back to you, through walls and boxes**, like it's being pulled.
+2. **Walls, trees, boxes and custom shapes on the way out**: it **bounces off** at the proper angle, keeping 85% of its speed (boxes break). After 8 bounces (stuck rattling in a corner) it drops.
+3. **Return**: once out of range it flies straight back toward you. **Anything solid in the way stops it**: it gets stuck on the far side and drops there.
 4. **Pick up**: walk over a boomerang on the floor to grab it.
-5. **Call back**: with **both hands empty**, hold throw for a moment (0.2 s). Your boomerangs fly straight to you through everything.
+5. **Call back**: with **both hands empty**, hold throw for a moment (0.2 s). It only works when the boomerang has a **clear line to you**. If a wall is between you, walk around it or go get it. After a blocked call-back it can't be called again for 1.2 s.
 6. It hits players **on the way out, on the way back, and when called back**. Your own boomerang never hurts you.
 
 ### Two hands, grey boomerangs
@@ -108,7 +108,7 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 | Triple | Throws 3 boomerangs at once |
 | Telekinesis | Hold throw to **steer** your flying boomerang (right-side drag, right stick, or movement keys) |
 | Teleport | Dash while your boomerang is out to warp to it |
-| Drill | Goes straight through walls on the way out too, breaking boxes |
+| Drill | Goes straight through walls both ways, breaking boxes |
 | Speedy Feet | Run 35% faster |
 | Shield | Survive one hit |
 | Disguise | Stand still for 1.2 s to turn into a box. Moving or acting reveals you. CPUs ignore you unless they're close |
@@ -118,6 +118,8 @@ After throwing, **push the aim stick** to bend the boomerang (up to about 150° 
 Power-ups get rarer as people collect them: 20% fewer for each power-up anyone holds.
 
 ### Arena features
+Custom-shaped walls (curves, round tables, odd polygons) are supported. See [custom-maps.md](custom-maps.md). Example arena: **Curvy Cafe**.
+
 | Tile | Behaviour | Arena |
 |---|---|---|
 | Tall grass | Walk through it. You're **invisible to other players** unless they're within about 1.5 tiles (phones show each player their own view; shared screens show a faint outline). CPUs can't see you either | Salad Bar |

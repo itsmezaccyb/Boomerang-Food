@@ -21,23 +21,43 @@ g = setup(); [a, b] = g.players; a.x = 300; a.y = 300; b.x = 900; b.y = 60;
 a.input = I({ throw: true, my: 1 }); run(g, 0.2); a.input = I({ throw: true, mx: 1 }); run(g, 0.1); a.input = I({ mx: 1 }); run(g, 1 / 120);
 r = own(g, a)[0]; ok(r && Math.abs(Math.atan2(r.vy, r.vx)) < 0.05, 'without an aim stick the throw follows the running direction');
 
-// --- outbound: sticks on walls
-g = setup(); [a, b] = g.players; b.x = 900; b.y = 500; wallCol(g, 10); a.x = 300; a.y = 216;
-a.input = I({ throw: true, ax: 1 }); run(g, 0.6); a.input = I({}); run(g, 1);
-r = own(g, a)[0]; ok(r && r.state === 'dropped' && r.x < 480 && r.x > 400, 'thrown into a wall: it sticks there (x=' + (r && Math.round(r.x)) + ')');
-a.input = I({}); a.x = r.x; a.y = r.y; run(g, 0.05); ok(a.ammo === 1, 'walk over it to pick it back up');
+// --- outbound: bounces off walls
+g = setup(); [a, b] = g.players; b.x = 900; b.y = 560; wallCol(g, 10); a.x = 330; a.y = 216;
+a.input = I({ throw: true, ax: 1 }); run(g, 0.6); a.input = I({}); run(g, 0.25);
+r = own(g, a)[0]; ok(r && r.vx < 0 && r.bounces >= 1, 'thrown at a wall: it bounces off');
+run(g, 2); ok(a.ammo === 1, '...and comes back to you');
 
-// --- return: straight back through walls
-g = setup(); [a, b] = g.players; b.x = 900; b.y = 560; wallCol(g, 10); a.x = 300; a.y = 216; Sim.use(g);
+// --- coming back: blocked by walls, stuck on the far side
+g = setup(); [a, b] = g.players; b.x = 900; b.y = 560; wallCol(g, 10); a.x = 300; a.y = 216;
 a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 700, y: 216, state: 'return', speed: 300 });
-run(g, 1.2, () => { a.input = I({}); }); ok(a.ammo === 1, 'returning boomerang comes straight back through a wall');
+run(g, 1.2, () => { a.input = I({}); }); r = own(g, a)[0];
+ok(a.ammo === 0 && r && r.state === 'dropped' && r.x > 528, 'returning boomerang gets stuck on the far side of a wall (x=' + (r && Math.round(r.x)) + ')');
+run(g, 1, () => { a.input = I({ throw: true }); });
+ok(own(g, a)[0].state === 'dropped', "calling it back doesn't work through a wall");
+a.x = 650; a.y = 300; b.x = 900; b.y = 560; run(g, 0.05, () => { a.input = I({}); }); // walk around (teleport for the test) into view
+// clear line now -> call-back works
 
-// --- recall through walls, deadly
-g = setup(1); [a, b] = g.players; a.ammo = 0; a.hasRang = false;
-put(g, { owner: a, x: 900, y: 300 }); a.x = 100; a.y = 300; b.x = 500; b.y = 300;
+// --- call-back with a clear line, deadly
+g = setup(); [a, b] = g.players; a.ammo = 0; a.hasRang = false;
+put(g, { owner: a, x: 860, y: 216 }); a.x = 100; a.y = 216; b.x = 500; b.y = 216;
 run(g, 2, () => { a.input = I({ throw: true }); b.input = I({}); });
-ok(a.ammo === 1, 'holding throw with empty hands calls it back through walls');
+ok(a.ammo === 1, 'holding throw with empty hands calls it back (clear line)');
 ok(!b.alive && a.score === 1, 'called-back boomerang kills in its path and scores +1');
+
+// --- custom shapes
+{
+  const ci = Sim.MAPS.findIndex(m => m.name === 'Curvy Cafe');
+  g = setup(ci); [a, b] = g.players; b.x = 900; b.y = 560;
+  ok(g.shapes.length > 0, 'map shapes are built (' + g.shapes.length + ')');
+  const tbl = g.shapes.find(sh => sh.type === 'circle'); // round table
+  a.x = tbl.x - tbl.r - 40; a.y = tbl.y; a.input = I({ mx: 1 }); run(g, 0.6);
+  ok(Math.hypot(a.x - tbl.x, a.y - tbl.y) >= tbl.r + 15, 'players are blocked by a round table');
+  a.x = tbl.x - tbl.r - 60; a.y = tbl.y; a.input = I({ throw: true, ax: 1 }); run(g, 0.05); a.input = I({ mx: -1 }); run(g, 0.25);
+  r = own(g, a)[0]; ok(r && r.bounces >= 1 && r.vx < 0, 'boomerangs bounce off a round table');
+  const arc = g.shapes.find(sh => sh.type === 'path');
+  Sim.use(g); const mid = arc.points[Math.floor(arc.points.length / 2)];
+  ok(!!Sim.shapeHit(mid[0], mid[1], 0) && !Sim.shapeHit(mid[0] + 60, mid[1] + 60, 0), 'curved wall is solid along its line only');
+}
 
 // --- slash
 g = setup(); [a, b] = g.players; a.x = 300; a.y = 216; b.x = 340; b.y = 216;
@@ -102,7 +122,7 @@ a.input = I({ throw: true, ax: 1, ay: 1 }); run(g, 0.5); a.input = I({}); run(g,
 g = setup(7); [a, b] = g.players; b.x = 900; b.y = 400; a.x = 2 * 48 + 24; a.y = 2 * 48 - 6; a.input = I({ my: 1 }); run(g, 0.25);
 ok(Math.abs(a.x - (17 * 48 + 24)) < 30, 'teleporter pads');
 g = setup(); [a] = g.players; a.powers = ['disguise']; a.input = I({}); run(g, 1.4); ok(a.disguised, 'disguise');
-g = setup(4, 2, { pull: false }); [a] = g.players; a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 600, y: 216 });
+g = setup(4, 2, { pull: false }); [a] = g.players; a.ammo = 0; a.hasRang = false; put(g, { owner: a, x: 860, y: 216 });
 a.x = 100; a.y = 216; run(g, 1, () => { a.input = I({ throw: true }); }); ok(a.ammo === 0, 'option: call-back off');
 
 console.log(`\n${pass} passed, ${failN} failed`);

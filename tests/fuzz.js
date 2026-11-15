@@ -3,7 +3,7 @@ const Sim = require('../sim.js');
 const MATCHES = +process.argv[2] || 40;
 const { TILE } = Sim;
 const fails = {}; const fail = (k, info) => { fails[k] = (fails[k] || 0) + 1; if (fails[k] <= 2) console.log('  !', k, info || ''); };
-const solid = (g, x, y) => { const v = g.grid[Math.floor(y / TILE)] && g.grid[Math.floor(y / TILE)][Math.floor(x / TILE)]; return v === undefined || v === 1 || v === 2 || v === 4; };
+const solid = (g, x, y) => { const v = g.grid[Math.floor(y / TILE)] && g.grid[Math.floor(y / TILE)][Math.floor(x / TILE)]; Sim.use(g); return v === undefined || v === 1 || v === 2 || v === 4 || !!Sim.shapeHit(x, y, 0); };
 function randInput(st) {
   if (Math.random() < 0.05) { st.mx = Math.random() * 2 - 1; st.my = Math.random() * 2 - 1; }
   if (Math.random() < 0.04) { st.ax = Math.random() < 0.5 ? 0 : Math.random() * 2 - 1; st.ay = Math.random() * 2 - 1; }
@@ -29,7 +29,7 @@ for (let m = 0; m < MATCHES; m++) {
       if (!(p.ammo >= 0 && p.ammo <= 2) || p.hasRang !== p.ammo > 0) fail('bad ammo ' + p.ammo);
       if (p.score < 0) fail('negative score');
       if (!p.alive) continue;
-      if (solid(g, p.x, p.y)) fail('player inside solid', `${Sim.MAPS[map].name} ${p.x | 0},${p.y | 0}`);
+      if (solid(g, p.x, p.y)) fail('player inside solid/shape', `${Sim.MAPS[map].name} ${p.x | 0},${p.y | 0}`);
       if (p.powers.length > 3) fail('more than 3 powers');
     }
     for (const r of g.rangs) {

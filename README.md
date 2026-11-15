@@ -7,7 +7,7 @@ It's a web app you can **Add to Home Screen** in Safari, it works offline agains
 
 - **Move**: drag on the left half of the screen
 - **Throw**: hold on the right half, drag to aim, let go (hold longer for more range; a target ring shows where it turns around)
-- **Get it back**: it flies straight back to you through walls. If it hits a wall on the way out it sticks there: walk over it, or **hold throw to call it back** (it hits anyone in the way)
+- **Get it back**: it bounces off walls on the way out and flies back to you, but a wall in the way stops it and it drops there. Walk over it, or **hold throw to call it back** when it has a clear line to you (it hits anyone in the way)
 - **Two hands**: carry up to two boomerangs. A knocked-out snack's boomerangs turn **grey** and anyone can grab them
 - **Scoring**: every knockout is a point (self-knockouts cost one); first to 5 / 10 / 15 wins
 - **Slash**: red button. Deadly with a boomerang in hand, a shove without one, and it swats boomerangs out of the air
@@ -19,7 +19,7 @@ It's a web app you can **Add to Home Screen** in Safari, it works offline agains
 - **Modes**: Free-for-all or Teams; options for power-up frequency and call-back on/off
 - Keyboard: WASD + J (throw) / L (slash) / K (dash). Controllers: A throw, X slash, B dash, right stick aims
 
-Full rules, and how they compare to Boomerang Fu: [`docs/mechanics.md`](docs/mechanics.md).
+Full rules, and how they compare to Boomerang Fu: [`docs/mechanics.md`](docs/mechanics.md). Custom-shaped walls and map art: [`docs/custom-maps.md`](docs/custom-maps.md).
 
 ## Files
 
