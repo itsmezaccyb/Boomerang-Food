@@ -1,0 +1,9 @@
+# One-click deploy on Render's free tier: https://render.com  (New + > Blueprint > pick this repo)
+services:
+  - type: web
+    name: boomerang-bites
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz

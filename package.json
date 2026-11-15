@@ -1,0 +1,14 @@
+{
+  "name": "boomerang-bites",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Snack-sized boomerang brawler: home-screen web app + authoritative multiplayer server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
