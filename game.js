@@ -22,7 +22,7 @@ function store(k, v) { try { if (v === undefined) return JSON.parse(localStorage
 const esc = (s) => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 // ---------------------------------------------------------------- sprites
-const SPRITE_NAMES = CHARS.map(c => c.key).concat(['boomerang', 'brick', 'crate', 'tree', 'skull', 'crown', 'boom', 'fire', 'multi', 'ghost', 'speed', 'shoe', 'shield']);
+const SPRITE_NAMES = CHARS.map(c => c.key).concat(['boomerang', 'brick', 'crate', 'tree', 'skull', 'crown', 'boom', 'fire', 'multi', 'ghost', 'shoe', 'shield', 'ice', 'crystal', 'sparkles']);
 const SPR = {};
 function loadSprites() {
   return Promise.all(SPRITE_NAMES.map(n => new Promise(res => {
@@ -75,6 +75,11 @@ const Sound = {
   fall() { this.tone(500, 0.5, 'sine', 0.15, 60); },
   win() { [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.18, 'triangle', 0.12, 0, i * 0.11)); },
   tick() { this.tone(700, 0.07, 'square', 0.06); },
+  shove() { this.noise(0.1, 0.25, 400, 'lowpass'); this.tone(160, 0.1, 'square', 0.08, 80); },
+  drop() { this.tone(300, 0.08, 'triangle', 0.08, 180); },
+  recall() { this.tone(400, 0.25, 'sine', 0.08, 900); },
+  freeze() { this.tone(1600, 0.3, 'sine', 0.08, 2400); this.noise(0.2, 0.1, 5000, 'highpass'); },
+  teleport() { this.tone(300, 0.2, 'sine', 0.12, 1500); },
 };
 
 // ---------------------------------------------------------------- settings
@@ -93,14 +98,15 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
-const ZERO = { mx: 0, my: 0, ax: 0, ay: 0, throw: false, dash: false };
+const ZERO = { mx: 0, my: 0, ax: 0, ay: 0, throw: false, dash: false, slash: false };
+const TUNE = Sim.T;
 
 function keyInput(set) {
   const k = set === 'A'
-    ? { u: ['KeyW'], d: ['KeyS'], l: ['KeyA'], r: ['KeyD'], t: ['KeyJ', 'Space'], h: ['KeyK', 'ShiftLeft'] }
-    : { u: ['ArrowUp'], d: ['ArrowDown'], l: ['ArrowLeft'], r: ['ArrowRight'], t: ['Slash', 'Numpad0', 'Enter'], h: ['Period', 'ShiftRight'] };
+    ? { u: ['KeyW'], d: ['KeyS'], l: ['KeyA'], r: ['KeyD'], t: ['KeyJ', 'Space'], h: ['KeyK', 'ShiftLeft'], s: ['KeyL', 'KeyE'] }
+    : { u: ['ArrowUp'], d: ['ArrowDown'], l: ['ArrowLeft'], r: ['ArrowRight'], t: ['Slash', 'Numpad0', 'Enter'], h: ['Period', 'ShiftRight'], s: ['Comma', 'Numpad1'] };
   const any = (arr) => arr.some(c => keys.has(c));
-  return { mx: (any(k.r) ? 1 : 0) - (any(k.l) ? 1 : 0), my: (any(k.d) ? 1 : 0) - (any(k.u) ? 1 : 0), ax: 0, ay: 0, throw: any(k.t), dash: any(k.h) };
+  return { mx: (any(k.r) ? 1 : 0) - (any(k.l) ? 1 : 0), my: (any(k.d) ? 1 : 0) - (any(k.u) ? 1 : 0), ax: 0, ay: 0, throw: any(k.t), dash: any(k.h), slash: any(k.s) };
 }
 function getPads() { return navigator.getGamepads ? Array.from(navigator.getGamepads() || []).filter(Boolean) : []; }
 function padInput(i) {
@@ -109,22 +115,24 @@ function padInput(i) {
   const b = (n) => !!(p.buttons[n] && (p.buttons[n].pressed || p.buttons[n].value > 0.4));
   let mx = dz(p.axes[0] || 0), my = dz(p.axes[1] || 0);
   if (b(14)) mx = -1; if (b(15)) mx = 1; if (b(12)) my = -1; if (b(13)) my = 1;
-  return { mx, my, ax: dz(p.axes[2] || 0), ay: dz(p.axes[3] || 0), throw: b(0) || b(7) || b(5) || b(2), dash: b(1) || b(6) || b(4) || b(3) };
+  return { mx, my, ax: dz(p.axes[2] || 0), ay: dz(p.axes[3] || 0), throw: b(0) || b(7), dash: b(1) || b(6) || b(4), slash: b(2) || b(5) || b(3) };
 }
 
 // Touch: left side = floating joystick; right side = throw/aim stick; small dash button.
-const touch = { move: null, aim: null, dash: false, dashId: null, active: false };
+const touch = { move: null, aim: null, dash: false, dashId: null, slash: false, slashId: null, active: false };
 const canvas = $('game'), ctx = canvas.getContext('2d');
 const view = { w: 0, h: 0, dpr: 1, scale: 1, ox: 0, oy: 0, safe: { t: 0, r: 0, b: 0, l: 0 } };
-const dashBtn = () => ({ x: view.w - view.safe.r - 190, y: view.h - view.safe.b - 62, r: 36 });
+const dashBtn = () => ({ x: view.w - view.safe.r - 205, y: view.h - view.safe.b - 58, r: 36 });
+const slashBtn = () => ({ x: view.w - view.safe.r - 178, y: view.h - view.safe.b - 168, r: 36 });
 const throwBtn = () => ({ x: view.w - view.safe.r - 88, y: view.h - view.safe.b - 96, r: 52 });
 
 canvas.addEventListener('pointerdown', e => {
   Sound.unlock();
   if (game.state !== 'play') return;
   e.preventDefault(); touch.active = e.pointerType !== 'mouse' || touch.active;
-  const x = e.clientX, y = e.clientY, db = dashBtn();
-  if (dist2(x, y, db.x, db.y) < (db.r * 1.5) ** 2) { touch.dash = true; touch.dashId = e.pointerId; }
+  const x = e.clientX, y = e.clientY, db = dashBtn(), sb = slashBtn();
+  if (dist2(x, y, db.x, db.y) < (db.r * 1.4) ** 2) { touch.dash = true; touch.dashId = e.pointerId; }
+  else if (dist2(x, y, sb.x, sb.y) < (sb.r * 1.4) ** 2) { touch.slash = true; touch.slashId = e.pointerId; }
   else if (x < view.w * 0.45) { if (!touch.move) touch.move = { id: e.pointerId, ox: x, oy: y, x, y }; }
   else if (!touch.aim) touch.aim = { id: e.pointerId, ox: x, oy: y, x, y };
   try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
@@ -142,6 +150,7 @@ function endPointer(e) {
   if (touch.move && touch.move.id === e.pointerId) touch.move = null;
   if (touch.aim && touch.aim.id === e.pointerId) touch.aim = null;
   if (touch.dashId === e.pointerId) { touch.dash = false; touch.dashId = null; }
+  if (touch.slashId === e.pointerId) { touch.slash = false; touch.slashId = null; }
 }
 canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
@@ -149,7 +158,7 @@ document.addEventListener('touchmove', e => { if (game.state === 'play' && !(e.t
 document.addEventListener('gesturestart', e => e.preventDefault());
 
 function touchInput() {
-  const r = { mx: 0, my: 0, ax: 0, ay: 0, throw: false, dash: touch.dash };
+  const r = { mx: 0, my: 0, ax: 0, ay: 0, throw: false, dash: touch.dash, slash: touch.slash };
   if (touch.move) {
     const dx = touch.move.x - touch.move.ox, dy = touch.move.y - touch.move.oy, d = Math.hypot(dx, dy);
     if (d > 8) { const m = Math.min(1, d / 50); r.mx = dx / d * m; r.my = dy / d * m; }
@@ -161,7 +170,7 @@ function touchInput() {
   }
   return r;
 }
-const mergeInput = (a, b) => ({ mx: clamp(a.mx + b.mx, -1, 1), my: clamp(a.my + b.my, -1, 1), ax: a.ax || b.ax, ay: a.ay || b.ay, throw: a.throw || b.throw, dash: a.dash || b.dash });
+const mergeInput = (a, b) => ({ mx: clamp(a.mx + b.mx, -1, 1), my: clamp(a.my + b.my, -1, 1), ax: a.ax || b.ax, ay: a.ay || b.ay, throw: a.throw || b.throw, dash: a.dash || b.dash, slash: a.slash || b.slash });
 // "Main" device input: touch + WASD + arrows + controller 1 (used for the touch player locally and always online)
 function mainInput(useArrows = true, usePad = true) {
   let inp = mergeInput(touchInput(), keyInput('A'));
@@ -194,7 +203,15 @@ function handleEvent(type, d) {
       Sound.dash();
       for (let i = 0; i < 6; i++) vfx.parts.push({ x: d.x, y: d.y + 10, vx: rand(-60, 60), vy: rand(-60, 20), life: 0.4, max: 0.4, col: 'rgba(255,255,255,0.7)', r: rand(3, 6) });
       break;
-    case 'slash': { Sound.slash(); const p = P(d.i); if (p && game.online) p.slashT = 0.2; break; }
+    case 'slash': { Sound.slash(); const p = P(d.i); if (p && game.online) { p.slashT = 0.2; p.slashArmed = !!d.a; } break; }
+    case 'shove': Sound.shove(); vfx.shake = Math.max(vfx.shake, 3); vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.25, col: '#fff' }); break;
+    case 'drop': Sound.drop(); for (let i = 0; i < 5; i++) vfx.parts.push({ x: d.x, y: d.y + 6, vx: rand(-50, 50), vy: rand(-40, 10), life: 0.35, max: 0.35, col: 'rgba(255,255,255,0.7)', r: rand(2, 4) }); break;
+    case 'freeze': Sound.freeze(); vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.5, col: '#9fe3ff' }); break;
+    case 'teleport':
+      Sound.teleport();
+      vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.4, col: '#e3c7ff' }, { type: 'ring', x: d.x2, y: d.y2, t: 0, max: 0.4, col: '#e3c7ff' });
+      if (game.online && net.pred) net.smooth = { x: 0, y: 0 };
+      break;
     case 'spark': if (d.s) Sound.clink(); vfx.fx.push({ type: 'spark', x: d.x, y: d.y, t: 0, max: 0.25 }); break;
     case 'ring': vfx.fx.push({ type: 'ring', x: d.x, y: d.y, t: 0, max: 0.5, col: '#fff' }); break;
     case 'boom':
@@ -344,7 +361,8 @@ const net = {
       state: 'play', online: true, grid: [], mapIndex: 0, time: 0, phase: 'intro', rangs: [], pickups: [], points: m.points,
       players: m.players.map(p => ({ i: p.i, char: CHARS[p.char], color: PCOLORS[p.i], name: p.name, bot: p.type !== 'net', score: 0,
         x: 0, y: 0, vx: 0, vy: 0, face: 0, alive: true, hasRang: true, charging: false, charge: 0, shield: false, dashT: 0, dashDir: 0,
-        inv: 0, falling: 0, power: null, slashT: 0, walkT: 0 })),
+        inv: 0, falling: 0, powers: [], slashT: 0, slashArmed: true, walkT: 0, frozen: 0, recalling: false, aim: 0 })),
+      trails: [],
     };
     this.slot = m.you; this.snaps = []; this.clock = null; this.hist = []; this.pred = null; this.seq = 0; this.acc = 0;
     this.smooth = { x: 0, y: 0 };
@@ -371,7 +389,8 @@ const net = {
     const s = m.m, old = this.pred;
     const pred = {
       x: s[6] / 10, y: s[7] / 10, vx: s[0] / 10, vy: s[1] / 10, dashT: s[2] / 1000, dashCd: s[3] / 1000, prevDash: !!s[4], dashDir: s[5] / 1000,
-      face: old ? old.face : me[3] / 100, power: me[6] ? POWER_KEYS[me[6] - 1] : null, charging: !!(me[4] & 4), walkT: 0,
+      face: me[3] / 100, powers: Sim.bitsToPowers(me[6]), shield: !!(me[4] & 8), charging: !!(me[4] & 4), walkT: 0,
+      kbx: s[8] / 10, kby: s[9] / 10, aim: s[10] / 1000, aimStick: !!s[11], frozen: s[12] / 1000, steeringNoMove: !!s[13],
     };
     this.hist = this.hist.filter(h => h.seq > m.a);
     if (this.canPredict()) { Sim.use(game); for (const h of this.hist) this.simulate(pred, h.inp); }
@@ -428,21 +447,22 @@ const net = {
       p.face = ea[3] / 100 + angDiff(e[3] / 100, ea[3] / 100) * t;
       p.alive = !!(f & 1); p.hasRang = !!(f & 2); p.charging = !!(f & 4); p.shield = !!(f & 8);
       p.dashT = f & 16 ? 0.1 : 0; p.inv = f & 32 ? 0.1 : 0; p.charge = e[5] / 100;
-      p.power = e[6] ? POWER_KEYS[e[6] - 1] : null; p.vx = e[7]; p.vy = e[8]; p.falling = e[9] / 100;
+      p.powers = Sim.bitsToPowers(e[6]); p.vx = e[7]; p.vy = e[8]; p.falling = e[9] / 100;
+      p.frozen = f & 64 ? 1 : 0; p.recalling = !!(f & 128); p.aim = e[10] / 100;
       p.dashDir = Math.atan2(p.vy, p.vx);
       if (p.i === this.slot && this.pred && p.alive && !p.falling) { // our own fighter: predicted, not delayed
         const q = this.pred;
-        p.x = q.x + this.smooth.x; p.y = q.y + this.smooth.y; p.vx = q.vx; p.vy = q.vy; p.face = q.face;
+        p.x = q.x + this.smooth.x; p.y = q.y + this.smooth.y; p.vx = q.vx; p.vy = q.vy; p.face = q.face; p.aim = q.aim;
         p.dashT = q.dashT; p.dashDir = q.dashDir;
       }
     }
     const byId = new Map(a.R.map(r => [r[0], r]));
     game.rangs = b.R.map(r => {
       const ra = byId.get(r[0]) || r;
-      const st = r[4] & 3;
       return { id: r[0], x: lerp(ra[1], r[1], t), y: lerp(ra[2], r[2], t), owner: game.players.find(p => p.i === r[3]) || game.players[0],
-        state: st === 0 ? 'out' : st === 1 ? 'return' : 'dropped', fire: !!(r[4] & 4), ghost: !!(r[4] & 8), zap: !!(r[4] & 16) };
+        state: Sim.RSTATE[r[4] & 7], fire: !!(r[4] & 8), ghost: !!(r[4] & 16), ice: !!(r[4] & 32), boom: !!(r[4] & 64) };
     });
+    game.trails = (b.L || []).map(l => ({ id: l[0], x: l[1], y: l[2], k: l[3] ? 'ice' : 'fire', t: l[4] / 10 }));
     game.pickups = b.K.map(k => ({ id: k[0], x: k[1], y: k[2], type: POWER_KEYS[k[3]] }));
   },
 };
@@ -539,23 +559,40 @@ function render(T) {
     ctx.beginPath(); ctx.arc(x * TILE + 12 + s * 2.5, y * TILE + 30 - ph * 10, 3 + ph * 4, 0, 7); ctx.fill();
   }
 
+  for (const tr of game.trails || []) {
+    const life = 1 - tr.t / TUNE.trailLife, s = (tr.id * 37) % 10;
+    if (tr.k === 'fire') {
+      ctx.globalAlpha = clamp(life * 1.5, 0, 1) * 0.85;
+      drawSpr(ctx, 'fire', tr.x + (s - 5) * 0.6, tr.y - 6, 22 + Math.sin(T * 18 + s) * 3);
+    } else {
+      ctx.globalAlpha = clamp(life * 1.5, 0, 1) * 0.7; ctx.fillStyle = '#bfefff';
+      ctx.beginPath(); ctx.ellipse(tr.x, tr.y, 15, 10, s, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(tr.x - 4, tr.y - 3, 3, 0, 7); ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 1;
   for (const k of game.pickups) {
     const kt = vfx.pick.get(k.id) || 0, bob = Math.sin(kt * 4) * 3, sc = Math.min(1, kt * 5);
     ctx.fillStyle = 'rgba(0,0,0,0.15)'; ctx.beginPath(); ctx.ellipse(k.x, k.y + 14, 12, 4, 0, 0, 7); ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.55)'; ctx.beginPath(); ctx.arc(k.x, k.y - 4 + bob, 17 * sc, 0, 7); ctx.fill();
     drawSpr(ctx, POWERS[k.type].sprite, k.x, k.y - 4 + bob, 26 * sc);
   }
-  for (const r of game.rangs) if (r.state === 'dropped') {
+  for (const r of game.rangs) if (r.state === 'dropped') { // lying on the floor: owner's colour ring so you can find yours
     const v = vfx.rang.get(r.id);
-    ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.beginPath(); ctx.arc(r.x, r.y, 15 + Math.sin(T * 5) * 2, 0, 7); ctx.fill();
+    ctx.strokeStyle = r.owner.color; ctx.globalAlpha = 0.5 + Math.sin(T * 5) * 0.25; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(r.x, r.y + 4, 17, 9, 0, 0, 7); ctx.stroke(); ctx.globalAlpha = 1;
     drawSpr(ctx, 'boomerang', r.x, r.y, 24, v ? v.spin : 0);
+  }
+  for (const r of game.rangs) if (r.state === 'recall' || r.state === 'tele') { // tether line while summoning / steering
+    ctx.strokeStyle = r.owner.color; ctx.globalAlpha = 0.45; ctx.lineWidth = 2; ctx.setLineDash([4, 6]); ctx.lineDashOffset = T * 60;
+    ctx.beginPath(); ctx.moveTo(r.owner.x, r.owner.y); ctx.lineTo(r.x, r.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
   const ps = game.players.filter(p => p.alive).sort((a, b) => a.y - b.y);
   for (const p of ps) drawPlayer(p, T);
 
   for (const r of game.rangs) if (r.state !== 'dropped') {
-    const v = vfx.rang.get(r.id) || { trail: [], spin: 0 }, sz = r.zap ? 28 : 24;
-    ctx.fillStyle = r.fire ? '#ff7a2a' : r.ghost ? '#c9b8ff' : r.owner.color;
+    const v = vfx.rang.get(r.id) || { trail: [], spin: 0 }, sz = 24;
+    ctx.fillStyle = r.fire ? '#ff7a2a' : r.ice ? '#9fe3ff' : r.ghost ? '#c9b8ff' : r.owner.color;
     for (let i = 0; i < v.trail.length; i++) {
       const tr = v.trail[i]; ctx.globalAlpha = (i / v.trail.length) * 0.35;
       ctx.beginPath(); ctx.arc(tr.x, tr.y, 6 * i / v.trail.length + 2, 0, 7); ctx.fill();
@@ -563,7 +600,7 @@ function render(T) {
     ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.beginPath(); ctx.ellipse(r.x + 6, r.y + 12, 9, 4, 0, 0, 7); ctx.fill();
     drawSpr(ctx, 'boomerang', r.x, r.y, sz, v.spin, r.ghost ? 0.6 : 1);
-    if (r.fire) drawSpr(ctx, 'fire', r.x, r.y - 4, 14 + Math.sin(T * 30) * 2);
+    if (r.boom) drawSpr(ctx, 'boom', r.x, r.y - 4, 13 + Math.sin(T * 30) * 2);
   }
 
   for (const p of vfx.parts) {
@@ -614,11 +651,15 @@ function drawPlayer(p, T) {
     ctx.save(); ctx.translate(ax, ay); ctx.rotate(p.face); ctx.fillStyle = p.color;
     ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(-4, -6); ctx.lineTo(-4, 6); ctx.closePath(); ctx.fill(); ctx.restore();
   }
-  if (p.charging && p.charge >= 0.16) {
-    const pw = clamp((p.charge - 0.16) / 0.55, 0, 1), len = (170 + 340 * pw) * (p.power === 'zap' ? 1.45 : 1);
-    ctx.strokeStyle = p.color; ctx.globalAlpha = 0.55; ctx.lineWidth = 3; ctx.setLineDash([6, 8]); ctx.lineDashOffset = -T * 40;
-    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x + Math.cos(p.face) * len, p.y + Math.sin(p.face) * len); ctx.stroke();
-    ctx.setLineDash([]); ctx.globalAlpha = 1;
+  if (p.charging) { // aim line + target ring where the boomerang will turn around
+    const pw = clamp(p.charge / TUNE.fullCharge, 0, 1), len = TUNE.minRange + (TUNE.maxRange - TUNE.minRange) * pw, a = p.aim;
+    const tx = p.x + Math.cos(a) * len, ty = p.y + Math.sin(a) * len;
+    ctx.strokeStyle = p.color; ctx.globalAlpha = 0.6; ctx.lineWidth = 3; ctx.setLineDash([6, 8]); ctx.lineDashOffset = -T * 40;
+    ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(tx, ty); ctx.stroke(); ctx.setLineDash([]);
+    ctx.globalAlpha = 0.9; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(tx, ty, 14, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tx - 20, ty); ctx.lineTo(tx - 8, ty); ctx.moveTo(tx + 8, ty); ctx.lineTo(tx + 20, ty);
+    ctx.moveTo(tx, ty - 20); ctx.lineTo(tx, ty - 8); ctx.moveTo(tx, ty + 8); ctx.lineTo(tx, ty + 20); ctx.stroke();
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(p.x, p.y - 4, 26, -Math.PI / 2, -Math.PI / 2 + pw * Math.PI * 2); ctx.stroke();
   }
   ctx.save(); ctx.translate(p.x, p.y - bob - 4);
@@ -626,17 +667,21 @@ function drawPlayer(p, T) {
   if (p.inv > 0 && Math.floor(T * 20) % 2) ctx.globalAlpha = 0.5;
   ctx.drawImage(SPR[p.char.key], -size / 2, -size / 2, size, size);
   ctx.restore(); ctx.globalAlpha = 1;
+  if (p.frozen > 0) { // ice block
+    ctx.fillStyle = 'rgba(170,230,255,0.45)'; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
+    roundRectAt(p.x - 22, p.y - 28, 44, 46, 8); ctx.fill(); ctx.stroke();
+  }
   if (p.hasRang && !p.falling) {
     const hx = p.x + Math.cos(p.face + 1.2) * 20, hy = p.y - bob + Math.sin(p.face + 1.2) * 14;
     drawSpr(ctx, 'boomerang', hx, hy, 18, p.face + (p.charging ? T * 20 : 0.6));
   }
   if (p.slashT > 0) {
     const k = 1 - p.slashT / 0.2;
-    ctx.strokeStyle = `rgba(255,255,255,${1 - k})`; ctx.lineWidth = 7;
+    ctx.strokeStyle = p.slashArmed === false ? `rgba(255,220,160,${1 - k})` : `rgba(255,255,255,${1 - k})`; ctx.lineWidth = p.slashArmed === false ? 4 : 7;
     ctx.beginPath(); ctx.arc(p.x, p.y, 44, p.face - 1.3 + k * 0.3, p.face + 1.3 * (k * 2 - 1)); ctx.stroke();
   }
   if (p.shield) { ctx.strokeStyle = 'rgba(127,211,255,0.85)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(p.x, p.y - 4, 25 + Math.sin(T * 6) * 1.5, 0, 7); ctx.stroke(); }
-  if (p.power) drawSpr(ctx, POWERS[p.power].sprite, p.x + 17, p.y - 24 - bob, 16);
+  (p.powers || []).forEach((k, n) => drawSpr(ctx, POWERS[k].sprite, p.x - 14 + n * 14, p.y - 30 - bob, 14));
   if (game.online && p.name) {
     ctx.font = '800 11px ui-rounded, system-ui, sans-serif'; ctx.textAlign = 'center';
     ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.strokeText(p.name, p.x, p.y + 34);
@@ -659,6 +704,7 @@ function drawScores() {
   }
   ctx.textBaseline = 'alphabetic';
 }
+function roundRectAt(x, y, w, h, r) { roundRect(x, y, w, h, r); }
 function roundRect(x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
 
 function drawTouchControls() {
@@ -682,16 +728,23 @@ function drawTouchControls() {
     const dx = a.x - a.ox, dy = a.y - a.oy, d = Math.hypot(dx, dy) || 1, k = Math.min(1, 50 / d);
     ctx.fillStyle = 'rgba(255,182,39,0.6)'; ctx.beginPath(); ctx.arc(a.ox + dx * k, a.oy + dy * k, 24, 0, 7); ctx.fill();
     if (me.charging) {
-      const pw = clamp((me.charge - 0.16) / 0.55, 0, 1);
+      const pw = clamp(me.charge / TUNE.fullCharge, 0, 1);
       ctx.strokeStyle = '#ffb627'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(a.ox, a.oy, 66, -Math.PI / 2, -Math.PI / 2 + pw * Math.PI * 2); ctx.stroke();
     }
   } else {
-    ctx.globalAlpha = me.hasRang ? 1 : 0.4;
+    ctx.globalAlpha = me.hasRang ? 1 : 0.6;
     ctx.fillStyle = 'rgba(255,182,39,0.25)'; ctx.beginPath(); ctx.arc(tb.x, tb.y, tb.r, 0, 7); ctx.fill();
     ctx.strokeStyle = 'rgba(255,182,39,0.6)'; ctx.lineWidth = 2; ctx.stroke();
-    drawSpr(ctx, 'boomerang', tb.x, tb.y, 44, -0.4);
+    drawSpr(ctx, 'boomerang', tb.x, tb.y - (me.hasRang ? 0 : 6), me.hasRang ? 44 : 30, -0.4);
+    if (!me.hasRang) { ctx.fillStyle = '#fff'; ctx.font = '900 11px system-ui'; ctx.textAlign = 'center'; ctx.fillText((me.powers || []).includes('tele') ? 'HOLD: STEER' : 'HOLD: CALL', tb.x, tb.y + 24); }
     ctx.globalAlpha = 1;
   }
+  const sb = slashBtn();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = touch.slash ? 'rgba(255,93,115,0.55)' : 'rgba(255,93,115,0.25)'; ctx.beginPath(); ctx.arc(sb.x, sb.y, sb.r, 0, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,93,115,0.75)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#fff'; ctx.font = '900 12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(me.hasRang ? 'SLASH' : 'SHOVE', sb.x, sb.y);
+  ctx.textBaseline = 'alphabetic';
   const db = dashBtn();
   ctx.fillStyle = touch.dash ? 'rgba(67,168,255,0.5)' : 'rgba(67,168,255,0.25)'; ctx.beginPath(); ctx.arc(db.x, db.y, db.r, 0, 7); ctx.fill();
   ctx.strokeStyle = 'rgba(67,168,255,0.7)'; ctx.lineWidth = 2; ctx.stroke();
