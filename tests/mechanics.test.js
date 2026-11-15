@@ -6,7 +6,9 @@ const I = (o) => Object.assign({}, Sim.NO_INPUT, o);
 const run = (g, sec, f) => { for (let t = 0; t < sec; t += 1 / 120) { if (f) f(t); Sim.step(g, 1 / 120); } };
 function setup(map = 4, n = 2, opts, points = 10) {
   const g = Sim.create(); Sim.newMatch(g, Array.from({ length: n }, (_, i) => ({ i, type: 'local', char: i })), points, map, opts);
-  g.phase = 'fight'; return g;
+  g.phase = 'fight';
+  if (map === 4) { for (let y = 1; y < g.rows - 1; y++) for (let x = 1; x < g.cols - 1; x++) g.grid[y][x] = 0; g.shapes = []; g.nav = { b: new Uint8Array(g.cols * g.rows), r: new Uint8Array(g.cols * g.rows), d: new Uint8Array(g.cols * g.rows) }; } // plain test arena: tiles only
+  return g;
 }
 const own = (g, p) => g.rangs.filter(r => r.owner === p && !r.temp);
 const put = (g, o) => { const r = Object.assign({ id: 900 + g.rangs.length, vx: 0, vy: 0, speed: 0, state: 'dropped', traveled: 0, maxDist: 0, spin: 0, t: 0, stateT: 0, immune: null, immuneT: 0, trailD: 0, temp: false, neutral: false }, o); g.rangs.push(r); return r; };

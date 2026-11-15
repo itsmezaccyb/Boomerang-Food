@@ -6,7 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/mechanics.test.js && node tests/fuzz.js 30"
+    "test": "node tests/maps.test.js && node tests/mechanics.test.js && node tests/fuzz.js 30"
   },
   "engines": { "node": ">=18" },
   "dependencies": {

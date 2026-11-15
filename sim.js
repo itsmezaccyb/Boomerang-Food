@@ -65,55 +65,163 @@ const T = {
 // Quadrant maps (10x6), mirrored both ways into a fair 20x12 arena.
 // # wall  t tree  c box  o hot-sauce pit  S spawn  . floor
 const MAPS = [
-  { name: 'Picnic', q: ['##########', '#S........', '#..##..c..', '#..#...c..', '#....c....', '#.c...o...'] },
-  { name: 'Kitchen', q: ['##########', '#S...c....', '#.##...##.', '#.#..c....', '#...##..cc', '#.c..#....'] },
-  { name: 'Sauce Pit', q: ['##########', '#S..c.....', '#..ooo..#.', '#..o....#.', '#..o..c...', '#.c....ooo'] },
-  { name: 'Garden', q: ['##########', '#S...t....', '#.c.....c.', '#..t.cc.t.', '#.....t...', '#.tc......'] },
-  { name: 'Open Plate', q: ['##########', '#S........', '#.........', '#...c..#..', '#.........', '#......c..'] },
-  // g tall grass (hide)  i slippery ice  p teleporter pad (warps to the opposite pad)
-  { name: 'Salad Bar', q: ['##########', '#S..ggg...', '#.c.ggg.#.', '#...c...#.', '#gg....gg.', '#gg..c.gg.'] },
-  { name: 'Freezer', q: ['##########', '#S..iiii..', '#.##iiii#.', '#..iiiiii.', '#.ciiiii..', '#..iiii.c.'] },
-  { name: 'Portal Pantry', q: ['##########', '#S...#....', '#.p..#..c.', '#....#....', '#.c.....##', '#.....c...'] },
+  // Each arena: q = top-left quarter of the tile grid (mirrored into the other three), shapes = custom solid
+  // pieces in tile units (mirrored too unless mirror: false), shapeColor = default colour for its shapes.
+  // Tiles: # wall  t tree  c box  o hot-sauce pit  g tall grass  i ice  p teleporter  S spawn  . floor
+  { name: 'Picnic', shapeColor: '#b9773f', q: [
+    '##########',
+    '#S........',
+    '#.........',
+    '#.........',
+    '#.........',
+    '#........o'],
+    shapes: [
+      { type: 'circle', x: 4.2, y: 3.6, r: 0.8 },                                   // picnic tables
+      { type: 'arc', x: 10, y: 6, r: 2.8, from: 205, to: 240, width: 0.4 },          // benches curving round the sauce pond
+      { type: 'path', points: [[6, 2.4], [7.4, 2.4]], width: 0.35, color: '#8a5a2b' }, // little fences
+    ] },
+  { name: 'Kitchen', shapeColor: '#8d93a3', q: [
+    '##########',
+    '#S........',
+    '#.........',
+    '#.........',
+    '#.........',
+    '#.....c...'],
+    shapes: [
+      { type: 'poly', points: [[3, 2], [6.2, 2], [6.2, 2.8], [3.8, 2.8], [3.8, 4.4], [3, 4.4]] }, // L-shaped counters
+      { type: 'circle', x: 8.2, y: 3.9, r: 0.6, color: '#5a5f6b' },                  // stove tops
+      { type: 'poly', points: [[8.4, 5.2], [11.6, 5.2], [11.6, 6.8], [8.4, 6.8]], mirror: false }, // centre island
+    ] },
+  { name: 'Sauce Pit', shapeColor: '#c98a4a', q: [
+    '##########',
+    '#S........',
+    '#..ooo....',
+    '#..o......',
+    '#..o......',
+    '#.......oo'],
+    shapes: [
+      { type: 'circle', x: 6.6, y: 2.2, r: 0.55 },                                   // pillars
+      { type: 'circle', x: 8.5, y: 3.4, r: 0.45 },
+      { type: 'path', points: [[5.6, 4.6], [6.4, 4.1]], width: 0.35 },              // a bit of railing
+    ] },
+  { name: 'Garden', shapeColor: '#4f8f3a', q: [
+    '##########',
+    '#S...t....',
+    '#.........',
+    '#.....gg..',
+    '#.t...gg..',
+    '#.........'],
+    shapes: [
+      { type: 'arc', x: 2.6, y: 5.6, r: 1.9, from: 270, to: 355, width: 0.45 },      // curved hedges
+      { type: 'arc', x: 8.6, y: 1.4, r: 1.6, from: 95, to: 175, width: 0.45 },
+      { type: 'circle', x: 10, y: 6, r: 1.1, mirror: false, color: '#7fb8d8' },      // fountain
+    ] },
+  { name: 'Open Plate', shapeColor: '#c9a46a', q: [
+    '##########',
+    '#S........',
+    '#.........',
+    '#.........',
+    '#....c....',
+    '#.........'],
+    shapes: [
+      { type: 'arc', x: 10, y: 6, r: 4.2, from: 200, to: 250, width: 0.45 },         // broken plate rim (4 pieces)
+      { type: 'circle', x: 10, y: 6, r: 0.9, mirror: false, color: '#e8d5b0' },      // the plate in the middle
+      { type: 'circle', x: 3.4, y: 3.3, r: 0.5 },                                    // salt shakers
+    ] },
+  { name: 'Salad Bar', shapeColor: '#6aa84f', q: [
+    '##########',
+    '#S..ggg...',
+    '#...ggg...',
+    '#.........',
+    '#gg.......',
+    '#gg.......'],
+    shapes: [
+      { type: 'circle', x: 7, y: 2.6, r: 0.7, color: '#d9c7a1' },                    // salad bowls
+      { type: 'path', points: [[3.2, 4.4], [4.6, 3.7], [6.2, 4.4]], width: 0.35, color: '#a9d8e8' }, // sneeze guards
+      { type: 'arc', x: 10, y: 6, r: 1.6, from: 230, to: 310, width: 0.4 },          // little hedges round the middle
+    ] },
+  { name: 'Freezer', shapeColor: '#9fd6ee', q: [
+    '##########',
+    '#S..iiii..',
+    '#..iiiiii.',
+    '#.iiiiiii.',
+    '#.iiiiii..',
+    '#..iiiii..'],
+    shapes: [
+      { type: 'poly', points: [[5, 2.1], [5.9, 3], [5, 3.9], [4.1, 3]] },             // ice blocks
+      { type: 'poly', points: [[8, 1.1], [9.2, 1.1], [8.6, 2.5]] },                   // icicles hanging from the wall
+      { type: 'circle', x: 10, y: 6, r: 0.8, mirror: false, color: '#c9ecfa' },      // frozen pillar
+    ] },
+  { name: 'Portal Pantry', shapeColor: '#9c6b3f', q: [
+    '##########',
+    '#S........',
+    '#.p.......',
+    '#.........',
+    '#.........',
+    '#.....c...'],
+    shapes: [
+      { type: 'path', points: [[4.5, 1], [4.5, 3.4]], width: 0.5 },                   // shelves
+      { type: 'path', points: [[6.6, 4.3], [8.4, 4.3]], width: 0.5 },
+      { type: 'circle', x: 7.6, y: 2.1, r: 0.5, color: '#7a4a2a' },                  // barrels
+    ] },
   // Custom collision shapes (see docs/custom-maps.md): curved walls, round tables, an odd-shaped island.
-  { name: 'Curvy Cafe', q: ['##########', '#S........', '#.........', '#.....c...', '#.........', '#.........'],
+  { name: 'Curvy Cafe', shapeColor: '#a8553d', q: ['##########', '#S........', '#.........', '#.....c...', '#.........', '#.........'],
     shapes: [
       { type: 'arc', x: 1, y: 1, r: 4.2, from: 15, to: 75, width: 0.45 },             // curved wall around each corner
-      { type: 'circle', x: 6.5, y: 2.5, r: 0.75 },                                      // round tables
+      { type: 'circle', x: 6.5, y: 2.5, r: 0.75, color: '#b9773f' },                   // round tables
       { type: 'arc', x: 10, y: 6, r: 2.4, from: 205, to: 335, width: 0.45, mirror: false }, // centre crescents
       { type: 'arc', x: 10, y: 6, r: 2.4, from: 25, to: 155, width: 0.45, mirror: false },
       { type: 'poly', points: [[2.6, 5], [4.2, 5.6], [4.2, 6.4], [2.6, 7]] },          // wedge islands left/right
     ] },
-  // Big arenas (28x18) for 5-8 players. 'S' = corner spawn; extra spawns are placed automatically.
-  { name: 'Banquet Hall', big: true, q: [
+  // Big arenas (28x18) for 5-8 players. Extra spawns are placed automatically.
+  { name: 'Banquet Hall', big: true, shapeColor: '#a0603a', q: [
     '##############',
-    '#S...........',
-    '#..##....c....',
-    '#..#...c...##.',
-    '#......c...#..',
-    '#.c..##.......',
-    '#....#...ccc..',
-    '#..c.....c....',
-    '#.......c.....'].map(r => r.padEnd(14, '.')) },
-  { name: 'Farmers Market', big: true, q: [
+    '#S............',
+    '#.............',
+    '#.............',
+    '#.............',
+    '#.............',
+    '#.............',
+    '#..........c..',
+    '#.............'],
+    shapes: [
+      { type: 'path', points: [[3.2, 4], [8.2, 4]], width: 1.0 },                     // long banquet tables
+      { type: 'circle', x: 11, y: 3, r: 0.9, color: '#b9773f' },                       // round tables
+      { type: 'circle', x: 6, y: 7.2, r: 0.8, color: '#b9773f' },
+      { type: 'arc', x: 14, y: 9, r: 3.2, from: 200, to: 250, width: 0.45 },          // dance-floor ring
+    ] },
+  { name: 'Farmers Market', big: true, shapeColor: '#c48a3a', q: [
     '##############',
     '#S...ggg......',
-    '#....ggg..c...',
-    '#.cc......##..',
-    '#....t....#...',
-    '#ggg...c......',
-    '#ggg....ggg.c.',
-    '#.....t.ggg...',
-    '#..c..........'] },
-  { name: 'Food Court', big: true, q: [
+    '#....ggg......',
+    '#.............',
+    '#.........gg..',
+    '#ggg......gg..',
+    '#ggg..........',
+    '#.............',
+    '#.............'],
+    shapes: [
+      { type: 'poly', points: [[4.4, 5.4], [7.6, 5.4], [7.6, 6.4], [4.4, 6.4]] },     // market stalls
+      { type: 'circle', x: 11.2, y: 2.6, r: 0.7, color: '#8a5a2b' },                  // carts
+      { type: 'path', points: [[9.2, 7.2], [11, 8], [12.8, 8]], width: 0.4, color: '#5d8f3a' }, // hedge rows
+      { type: 'circle', x: 14, y: 9, r: 1.2, mirror: false, color: '#7fb8d8' },       // well in the square
+    ] },
+  { name: 'Food Court', big: true, shapeColor: '#8d93a3', q: [
     '##############',
-    '#S....#.......',
-    '#.p...#..c....',
-    '#.....#.......',
-    '#..c.....oo...',
-    '#........oo.c.',
-    '###..c........',
-    '#.......##....',
-    '#..c....#...c.'] },
+    '#S............',
+    '#.p...........',
+    '#.............',
+    '#.........oo..',
+    '#.........oo..',
+    '#.............',
+    '#.............',
+    '#.............'],
+    shapes: [
+      { type: 'arc', x: 14, y: 9, r: 4.6, from: 200, to: 250, width: 0.45 },          // curved counters round the middle
+      { type: 'path', points: [[5.2, 1], [5.2, 3.8]], width: 0.5 },                   // divider walls
+      { type: 'circle', x: 8, y: 7, r: 0.8, color: '#b9773f' },                        // tables
+      { type: 'poly', points: [[2.2, 6.4], [4.2, 6.4], [3.2, 7.9]] },                  // planters
+    ] },
 ];
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -162,7 +270,7 @@ function buildMap(idx, need) {
   while (out.length < (need || 4)) {
     let best = null, bestD = -1;
     for (let y = 1; y < ROWS - 1; y++) for (let x = 1; x < COLS - 1; x++) {
-      if (g[y][x] !== FLOOR || nav.b[x + y * COLS]) continue;
+      if (g[y][x] !== FLOOR || nav.b[x + y * COLS] || shapeHit(x * TILE + TILE / 2, y * TILE + TILE / 2, PLAYER_R + 12, shapes)) continue; // room to stand
       let near = false; // keep away from pits and walls on all sides
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (g[y + dy][x + dx] === PIT) near = true;
       if (near) continue;
@@ -205,7 +313,7 @@ function buildShapes(m) {
     const variants = s0.mirror === false ? [[false, false]] : [[false, false], [true, false], [false, true], [true, true]];
     for (const [fx, fy] of variants) {
       const X = (v) => (fx ? COLS - v : v) * TILE, Y = (v) => (fy ? ROWS - v : v) * TILE;
-      const sh = { type: base.type, color: s0.color, art: s0.art, fx, fy };
+      const sh = { type: base.type, color: s0.color || m.shapeColor, art: s0.art, fx, fy };
       if (base.type === 'circle') { sh.x = X(base.x); sh.y = Y(base.y); sh.r = base.r * TILE; }
       else { sh.points = base.points.map(([x, y]) => [X(x), Y(y)]); sh.w = (base.width || 0.5) * TILE; }
       const key = JSON.stringify([sh.type, sh.x, sh.y, sh.r, sh.points && sh.points.map(p => p.map(Math.round)).sort()]);
@@ -1012,7 +1120,14 @@ function updateBot(p, dt) {
   const enemies = game.players.filter(q => q !== p && q.alive && !q.falling && !sameTeam(p, q) &&
     (!(q.hidden || q.disguised) || Math.hypot(q.x - p.x, q.y - p.y) < 90));
   if (!enemies.length || game.phase === 'between') { // nobody visible: wander toward the middle
-    if (game.phase !== 'between' && !p.hasRang) { const m = mainRang(p); if (m && m.state === 'dropped') { if (game.opts.pull) inp.throw = true; else { const [dx, dy] = pathDir(p, b, m.x, m.y); inp.mx = dx; inp.my = dy; } } }
+    if (game.phase !== 'between' && !p.hasRang) {
+      const m = mainRang(p);
+      if (m && m.state === 'recall') inp.throw = true; // keep pulling
+      else if (m && m.state === 'dropped') {
+        if (b.think <= 0 || b.canPull === undefined) b.canPull = recallWouldReach(m, p);
+        if (game.opts.pull && b.canPull) inp.throw = true; else { const [dx, dy] = pathDir(p, b, m.x, m.y); inp.mx = dx; inp.my = dy; }
+      }
+    }
     else if (game.phase !== 'between') { // search: check grass patches and random spots until someone turns up
       b.patrolT = (b.patrolT || 0) - dt;
       if (!b.patrol || b.patrolT <= 0 || Math.hypot(b.patrol.x - p.x, b.patrol.y - p.y) < 30) {

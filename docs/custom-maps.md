@@ -22,6 +22,7 @@ In `sim.js`, the `MAPS` list. Each entry looks like:
     '#.........'],
   shapes: [ ... ],    // optional, see below
   big: true,          // optional: use this arena for 5–8 player games
+  shapeColor: '#8d93a3', // optional: default colour for this arena's shapes
 }
 ```
 
@@ -56,6 +57,12 @@ shapes: [
   { type: 'path', points: [[8, 2], [9, 3], [11, 3], [12, 2]], width: 0.4 },          // a bent fence
 ]
 ```
+
+## Checking a new arena
+
+- `node tests/maps.test.js` checks every arena: spawns are clear of walls and shapes, every spawn can reach every other, and nearly all the floor is reachable.
+- `node tests/map-view.js "Arena Name"` prints the arena as text so you can see blocked spots. `X` means covered by a shape, `?` means unreachable, and `|` marks a blocked step between tiles.
+- `docs/arenas.png` is a preview sheet of every arena.
 
 ## Workflow for custom art
 
